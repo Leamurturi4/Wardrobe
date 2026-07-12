@@ -1,13 +1,14 @@
-# [Project name]
+# AI Wardrobe
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A premium, AI-powered personal styling web app — users digitize their wardrobe and get AI-generated outfit recommendations.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm --filter @workspace/ai-wardrobe run dev` — run the AI Wardrobe frontend (main app, served at `/`)
+- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000, not yet used by the frontend)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
+- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec (not yet needed — no backend wired up)
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - Required env: `DATABASE_URL` — Postgres connection string
 
@@ -22,19 +23,26 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/ai-wardrobe/` — the frontend app (React + Vite, served at `/`)
+- `artifacts/ai-wardrobe/src/index.css` — design tokens (colors, typography, radius) for light/dark mode
+- `artifacts/ai-wardrobe/src/components/AppShell.tsx` — shared authenticated layout (sidebar + topbar), reused by every logged-in page
+- `artifacts/ai-wardrobe/src/pages/` — one file per route (landing, auth/*, dashboard, wardrobe/*, outfits/*, style-profile, shopping-assistant, beauty, friends, calendar, settings)
+- `artifacts/ai-wardrobe/src/lib/mock-*.ts` — placeholder/mock data per feature area (no backend wired up yet)
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Frontend-only build: no backend, no database, no OpenAPI/codegen. All data is realistic mock data in `src/lib/mock-*.ts` files.
+- Fonts: Playfair Display (headings) + Plus Jakarta Sans (body) for the premium/editorial feel.
+- Light mode is primary; dark mode is fully wired via `next-themes` with a toggle in the sidebar/settings.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+An AI-powered personal stylist: users digitize their wardrobe (Wardrobe), get AI-generated outfit suggestions (Outfits), track their style identity (Style Profile), get shopping recommendations (Shopping Assistant), manage beauty routines (Beauty), plan outfits on a Calendar, and coordinate looks with friends (Friends). All flows currently use placeholder data — no backend integration yet.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- Design direction (explicitly requested): minimalistic, premium, modern, elegant, soft rounded corners, spacious layouts, smooth animations, glassmorphism only where it fits, white/light mode primary with optional dark mode, no emojis anywhere in the UI.
+- Build only the frontend UI/UX first; backend integration is intentionally deferred.
 
 ## Gotchas
 
