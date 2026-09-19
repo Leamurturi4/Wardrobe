@@ -143,6 +143,7 @@ export default function GenerateOutfit() {
   const [occasion, setOccasion] = useState("");
   const [style, setStyle] = useState("");
   const [formality, setFormality] = useState("");
+  const [useInspiration, setUseInspiration] = useState(false);
 
   const top = TOPS[topIndex % TOPS.length];
   const bottom = BOTTOMS[bottomIndex % BOTTOMS.length];
@@ -237,6 +238,7 @@ export default function GenerateOutfit() {
             ...(occasion ? { occasion } : {}),
             ...(style ? { style } : {}),
             ...(formality ? { formality } : {}),
+            useInspiration,
           }),
         }),
       );
@@ -359,6 +361,33 @@ export default function GenerateOutfit() {
                         <option key={value}>{value}</option>
                       ))}
                     </select>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Recommendation mode</dt>
+                  <dd
+                    className="inspiration-mode-control"
+                    role="group"
+                    aria-label="Recommendation mode"
+                  >
+                    <button
+                      type="button"
+                      className={!useInspiration ? "active" : ""}
+                      aria-pressed={!useInspiration}
+                      disabled={isScanning}
+                      onClick={() => setUseInspiration(false)}
+                    >
+                      Wardrobe Only
+                    </button>
+                    <button
+                      type="button"
+                      className={useInspiration ? "active" : ""}
+                      aria-pressed={useInspiration}
+                      disabled={isScanning}
+                      onClick={() => setUseInspiration(true)}
+                    >
+                      Inspired
+                    </button>
                   </dd>
                 </div>
                 <div>
