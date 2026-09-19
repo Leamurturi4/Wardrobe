@@ -1,5 +1,6 @@
 import {
   categories,
+  inspirationResultSchema,
   outfitRecommendationSchema,
   styleItemRecommendationsSchema,
   styleItemRequestSchema,
@@ -7,6 +8,7 @@ import {
   wardrobeItemSchema,
   z,
   type OutfitRecommendation,
+  type InspirationResult,
   type StyleItemRequest,
   type StyleItemRecommendations,
   type StyleProfile,
@@ -17,6 +19,7 @@ import {
   type GeminiStructuredClient,
 } from "./clothing-analysis";
 import { DomainError, type WardrobeService } from "./wardrobe";
+import { noOpInspirationSource, type InspirationSource } from "./inspiration";
 
 type OutfitDraft = {
   itemIds: string[];
@@ -30,6 +33,7 @@ export type OutfitReasoningContext = {
   selectedItem: WardrobeItem;
   candidatePool: WardrobeItem[];
   styleProfile: StyleProfile;
+  inspiration?: InspirationResult;
 };
 export interface OutfitReasoner {
   recommend(context: OutfitReasoningContext): Promise<unknown>;
@@ -260,6 +264,8 @@ export function createGeminiOutfitReasoner(
 ): OutfitReasoner {
   return {
     async recommend(context) {
+      const { useInspiration: _useInspiration, ...stylingRequest } =
+        context.request;
       const allowedIds = [
         context.selectedItem.id,
         ...context.candidatePool.map((item) => item.id),
@@ -305,7 +311,7 @@ export function createGeminiOutfitReasoner(
       };
       const payload = {
         mode: "style-this-item",
-        request: context.request,
+        request: stylingRequest,
         selectedItem: compactItem(context.selectedItem),
         candidatePool: context.candidatePool.map(compactItem),
         styleDNA: {
@@ -316,10 +322,11 @@ export function createGeminiOutfitReasoner(
           preferredStyleTags: context.styleProfile.preferredStyleTags,
           preferredBrands: context.styleProfile.preferredBrands,
         },
+        ...(context.inspiration ? { inspiration: context.inspiration } : {}),
       };
       const prompt = `Build 3-4 distinct outfits around the selected wardrobe item using only IDs from the candidate pool below.
 The selectedItem.id must appear in every outfit. Never invent or alter an ID. Prefer complete category structures, but return the best partial look when inventory is insufficient.
-Use proportions, color harmony, formality, structure, texture, style direction, and Style DNA. Explanations must name concrete styling logic, not generic praise.
+Use proportions, color harmony, formality, structure, texture, style direction, and Style DNA. Explanations must name concrete styling logic, not generic praise.${context.inspiration ? "\nUse the provided inspiration only as creative direction; it cannot supply wardrobe items or IDs." : ""}
 Do not recommend products, shopping, weather, trends, or online inspiration.\n\n${JSON.stringify(payload)}`;
       return client.generateJson({
         prompt,
@@ -356,6 +363,7 @@ function rankingScore(
 export function createStyleItemService(
   wardrobe: WardrobeService,
   reasoner: OutfitReasoner,
+  inspirationSource: InspirationSource = noOpInspirationSource,
 ) {
   return {
     async recommend(input: unknown): Promise<StyleItemRecommendations> {
@@ -402,6 +410,25 @@ export function createStyleItemService(
           ],
         });
       }
+      let inspiration: InspirationResult | undefined;
+      if (request.useInspiration === true) {
+        try {
+          const result = inspirationResultSchema.parse(
+            await inspirationSource.search(selected, {
+              occasion: request.occasion,
+              style: request.style,
+              formality: request.formality,
+            }),
+          );
+          if (result.directions.length) inspiration = result;
+        } catch (error) {
+          if (error instanceof ClothingAnalysisError) throw error;
+          throw new ClothingAnalysisError(
+            502,
+            "Inspiration source returned invalid data. Wardrobe-only styling is still available.",
+          );
+        }
+      }
       let drafts: OutfitDraft[];
       try {
         drafts = draftsSchema.parse(
@@ -410,6 +437,7 @@ export function createStyleItemService(
             selectedItem: selected,
             candidatePool: pool,
             styleProfile: profile,
+            ...(inspiration ? { inspiration } : {}),
           }),
         ).outfits;
       } catch (error) {

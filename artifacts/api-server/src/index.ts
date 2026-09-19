@@ -12,6 +12,7 @@ import {
   createGeminiOutfitReasoner,
   createStyleItemService,
 } from "./services/outfit-recommendation";
+import { noOpInspirationSource } from "./services/inspiration";
 
 const rawPort = process.env["PORT"];
 
@@ -52,6 +53,7 @@ const app = createApp(
   createStyleItemService(
     wardrobeService,
     createGeminiOutfitReasoner(createGeminiStructuredClient(geminiOptions)),
+    noOpInspirationSource,
   ),
 );
 const server = app.listen(port, process.env.HOST || "127.0.0.1", () => {

@@ -534,12 +534,40 @@ export function findUserCorrectedFields(
     (field) => comparable(baseline[field]) !== comparable(reviewed[field]),
   );
 }
+export const sourceReferenceSchema = z
+  .object({
+    provider: text.min(1),
+    title: text.min(1),
+    url: z.string().trim().url().max(2_000),
+  })
+  .strict();
+export const styleDirectionSchema = z
+  .object({
+    name: text.min(1),
+    desiredCategories: z.array(z.enum(categories)).max(categories.length),
+    desiredTraits: tags.max(20),
+    colorDirection: tags.max(10),
+    styleTags: tags.max(10),
+    reasoning: z.string().trim().min(1).max(800),
+    sourceReferences: z.array(sourceReferenceSchema).max(20),
+  })
+  .strict();
+export const inspirationResultSchema = z
+  .object({
+    provider: text.min(1),
+    directions: z.array(styleDirectionSchema).max(10),
+  })
+  .strict();
+export type SourceReference = z.output<typeof sourceReferenceSchema>;
+export type StyleDirection = z.output<typeof styleDirectionSchema>;
+export type InspirationResult = z.output<typeof inspirationResultSchema>;
 export const styleItemRequestSchema = z
   .object({
     wardrobeItemId: text.min(1),
     occasion: text.min(1).optional(),
     style: text.min(1).optional(),
     formality: formality.optional(),
+    useInspiration: z.boolean().optional(),
   })
   .strict();
 export type StyleItemRequest = z.output<typeof styleItemRequestSchema>;

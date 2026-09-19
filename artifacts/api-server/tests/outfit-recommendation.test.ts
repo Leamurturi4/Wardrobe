@@ -17,6 +17,7 @@ import {
   type OutfitReasoner,
   type OutfitReasoningContext,
 } from "../src/services/outfit-recommendation";
+import type { InspirationSource } from "../src/services/inspiration";
 import { DomainError, type WardrobeService } from "../src/services/wardrobe";
 
 const now = "2026-01-01T00:00:00.000Z";
@@ -110,6 +111,7 @@ test("style-item keeps the selected item, uses only real IDs, ranks complete loo
     context?.candidatePool.some((candidate) => candidate.id === selected.id),
     false,
   );
+  assert.equal(context?.inspiration, undefined);
 });
 
 test("Gemini reasoning prompt contains compact metadata, allowed IDs, and Style DNA but no images", async () => {
@@ -137,6 +139,176 @@ test("Gemini reasoning prompt contains compact metadata, allowed IDs, and Style 
   assert.doesNotMatch(prompt, /originalImage|\/uploads\//);
   assert(JSON.stringify(responseSchema).includes(selected.id));
   assert(JSON.stringify(responseSchema).includes(bottom.id));
+
+  const wardrobeOnlyPrompt = prompt;
+  await createGeminiOutfitReasoner(client).recommend({
+    request: { wardrobeItemId: selected.id, useInspiration: false },
+    selectedItem: selected,
+    candidatePool: [bottom],
+    styleProfile: profile,
+  });
+  assert.equal(prompt, wardrobeOnlyPrompt);
+
+  await createGeminiOutfitReasoner(client).recommend({
+    request: { wardrobeItemId: selected.id, useInspiration: true },
+    selectedItem: selected,
+    candidatePool: [bottom],
+    styleProfile: profile,
+    inspiration: {
+      provider: "test-provider",
+      directions: [
+        {
+          name: "Tonal",
+          desiredCategories: ["Bottoms"],
+          desiredTraits: ["structured"],
+          colorDirection: ["tonal"],
+          styleTags: ["Minimalist"],
+          reasoning: "Keep the silhouette clean.",
+          sourceReferences: [],
+        },
+      ],
+    },
+  });
+  assert.match(prompt, /provided inspiration only as creative direction/);
+  assert.match(prompt, /"inspiration"/);
+});
+
+test("inspiration is optional, opt-in, normalized, and passed to the reasoner", async () => {
+  const selected = item("selected", "Tops");
+  const bottom = item("bottom", "Bottoms");
+  let searches = 0;
+  let context: OutfitReasoningContext | undefined;
+  const source: InspirationSource = {
+    search: async (garment, options) => {
+      searches += 1;
+      assert.equal(garment.id, selected.id);
+      assert.equal(options.occasion, "Dinner");
+      return {
+        provider: "test-provider",
+        directions: [
+          {
+            name: "Tonal evening",
+            desiredCategories: ["Bottoms", "Shoes"],
+            desiredTraits: ["structured"],
+            colorDirection: ["monochrome"],
+            styleTags: ["Minimalist"],
+            reasoning: "Use a clean tonal column with a structured contrast.",
+            sourceReferences: [
+              {
+                provider: "test-provider",
+                title: "Reference look",
+                url: "https://example.com/look",
+              },
+            ],
+          },
+        ],
+      };
+    },
+  };
+  const reasoner: OutfitReasoner = {
+    recommend: async (value) => {
+      context = value;
+      return {
+        outfits: [
+          {
+            itemIds: [selected.id, bottom.id],
+            title: "Wardrobe look",
+            explanation: "The existing bottom completes the look.",
+            styleTags: ["Minimalist"],
+            occasionFit: "Dinner",
+          },
+        ],
+      };
+    },
+  };
+  const service = createStyleItemService(
+    wardrobe([selected, bottom]),
+    reasoner,
+    source,
+  );
+
+  await service.recommend({ wardrobeItemId: selected.id });
+  assert.equal(searches, 0);
+  assert.equal(context?.inspiration, undefined);
+
+  await service.recommend({
+    wardrobeItemId: selected.id,
+    occasion: "Dinner",
+    useInspiration: true,
+  });
+  assert.equal(searches, 1);
+  assert.equal(context?.inspiration?.provider, "test-provider");
+  assert.equal(context?.inspiration?.directions[0]?.name, "Tonal evening");
+});
+
+test("useInspiration false preserves output and never calls the provider", async () => {
+  const selected = item("selected", "Tops");
+  const bottom = item("bottom", "Bottoms");
+  let searches = 0;
+  const source: InspirationSource = {
+    search: async () => {
+      searches += 1;
+      return { provider: "unused", directions: [] };
+    },
+  };
+  const reasoner: OutfitReasoner = {
+    recommend: async () => ({
+      outfits: [
+        {
+          itemIds: [selected.id, bottom.id],
+          title: "Unchanged",
+          explanation: "The wardrobe pieces work together.",
+          styleTags: [],
+          occasionFit: null,
+        },
+      ],
+    }),
+  };
+  const service = createStyleItemService(
+    wardrobe([selected, bottom]),
+    reasoner,
+    source,
+  );
+  const omitted = await service.recommend({ wardrobeItemId: selected.id });
+  const disabled = await service.recommend({
+    wardrobeItemId: selected.id,
+    useInspiration: false,
+  });
+
+  assert.deepEqual(disabled, omitted);
+  assert.equal(searches, 0);
+});
+
+test("invalid inspiration provider data is rejected before reasoning", async () => {
+  const selected = item("selected", "Tops");
+  const bottom = item("bottom", "Bottoms");
+  let reasoningCalls = 0;
+  const invalidSource = {
+    search: async () => ({
+      provider: "broken",
+      directions: [{ name: "Incomplete direction" }],
+    }),
+  } as unknown as InspirationSource;
+  const reasoner: OutfitReasoner = {
+    recommend: async () => {
+      reasoningCalls += 1;
+      return { outfits: [] };
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      createStyleItemService(
+        wardrobe([selected, bottom]),
+        reasoner,
+        invalidSource,
+      ).recommend({ wardrobeItemId: selected.id, useInspiration: true }),
+    (error: unknown) =>
+      error instanceof ClothingAnalysisError &&
+      error.status === 502 &&
+      error.message.includes("Inspiration source returned invalid data"),
+  );
+  assert.equal(reasoningCalls, 0);
 });
 
 test("candidate filtering removes unavailable, archived, redundant, season-incompatible, and formality-incompatible pieces", () => {
@@ -196,6 +368,22 @@ test("category completeness follows top, dress, shoe, and accessory templates", 
 test("hallucinated IDs and outfits that omit the selected item are rejected", async () => {
   const selected = item("selected", "Tops");
   const bottom = item("bottom", "Bottoms");
+  const source: InspirationSource = {
+    search: async () => ({
+      provider: "test-provider",
+      directions: [
+        {
+          name: "Grounded direction",
+          desiredCategories: ["Bottoms"],
+          desiredTraits: [],
+          colorDirection: [],
+          styleTags: [],
+          reasoning: "Use only matching pieces from the wardrobe.",
+          sourceReferences: [],
+        },
+      ],
+    }),
+  };
   for (const itemIds of [[selected.id, "invented"], [bottom.id]]) {
     const reasoner: OutfitReasoner = {
       recommend: async () => ({
@@ -215,7 +403,8 @@ test("hallucinated IDs and outfits that omit the selected item are rejected", as
         createStyleItemService(
           wardrobe([selected, bottom]),
           reasoner,
-        ).recommend({ wardrobeItemId: selected.id }),
+          source,
+        ).recommend({ wardrobeItemId: selected.id, useInspiration: true }),
       (error: unknown) =>
         error instanceof ClothingAnalysisError && error.status === 502,
     );
