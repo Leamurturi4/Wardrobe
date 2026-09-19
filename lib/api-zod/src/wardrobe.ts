@@ -534,11 +534,48 @@ export function findUserCorrectedFields(
     (field) => comparable(baseline[field]) !== comparable(reviewed[field]),
   );
 }
+
+type ParsedSourceUrl = {
+  protocol: string;
+  hostname: string;
+  toString(): string;
+};
+type SourceUrlConstructor = new (value: string) => ParsedSourceUrl;
+const SourceUrl = (globalThis as unknown as { URL: SourceUrlConstructor }).URL;
+
+export function normalizeSafeSourceUrl(value: string): string | null {
+  try {
+    const parsed = new SourceUrl(value.trim());
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+      return null;
+    if (!parsed.hostname) return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+export function getSourceHostname(value: string): string | null {
+  const normalized = normalizeSafeSourceUrl(value);
+  if (!normalized) return null;
+  return new SourceUrl(normalized).hostname
+    .toLocaleLowerCase()
+    .replace(/^www\./, "");
+}
+
+export const safeSourceUrlSchema = z
+  .string()
+  .trim()
+  .max(2_000)
+  .refine((value) => normalizeSafeSourceUrl(value) !== null, {
+    message: "Source URL must be a valid HTTP or HTTPS URL",
+  })
+  .transform((value) => normalizeSafeSourceUrl(value)!);
 export const sourceReferenceSchema = z
   .object({
     provider: text.min(1),
     title: text.min(1),
-    url: z.string().trim().url().max(2_000),
+    url: safeSourceUrlSchema,
   })
   .strict();
 export const styleDirectionSchema = z
