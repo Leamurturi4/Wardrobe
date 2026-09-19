@@ -412,21 +412,28 @@ export function createStyleItemService(
       }
       let inspiration: InspirationResult | undefined;
       if (request.useInspiration === true) {
+        let providerOutput: unknown;
+        let providerSucceeded = false;
         try {
-          const result = inspirationResultSchema.parse(
-            await inspirationSource.search(selected, {
-              occasion: request.occasion,
-              style: request.style,
-              formality: request.formality,
-            }),
-          );
-          if (result.directions.length) inspiration = result;
-        } catch (error) {
-          if (error instanceof ClothingAnalysisError) throw error;
-          throw new ClothingAnalysisError(
-            502,
-            "Inspiration source returned invalid data. Wardrobe-only styling is still available.",
-          );
+          providerOutput = await inspirationSource.search(selected, {
+            occasion: request.occasion,
+            style: request.style,
+            formality: request.formality,
+          });
+          providerSucceeded = true;
+        } catch {
+          // External inspiration is optional; provider outages fall back to wardrobe-only styling.
+        }
+        if (providerSucceeded) {
+          try {
+            const result = inspirationResultSchema.parse(providerOutput);
+            if (result.directions.length) inspiration = result;
+          } catch {
+            throw new ClothingAnalysisError(
+              502,
+              "Inspiration source returned invalid data. Wardrobe-only styling is still available.",
+            );
+          }
         }
       }
       let drafts: OutfitDraft[];

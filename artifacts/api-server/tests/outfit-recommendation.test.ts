@@ -311,6 +311,51 @@ test("invalid inspiration provider data is rejected before reasoning", async () 
   assert.equal(reasoningCalls, 0);
 });
 
+test("inspiration provider failures fall back to wardrobe-only recommendations", async () => {
+  const selected = item("selected", "Tops");
+  const bottom = item("bottom", "Bottoms");
+  let searches = 0;
+  let context: OutfitReasoningContext | undefined;
+  const failingSource: InspirationSource = {
+    search: async () => {
+      searches += 1;
+      throw new Error("provider unavailable");
+    },
+  };
+  const reasoner: OutfitReasoner = {
+    recommend: async (value) => {
+      context = value;
+      return {
+        outfits: [
+          {
+            itemIds: [selected.id, bottom.id],
+            title: "Wardrobe fallback",
+            explanation: "The existing wardrobe pieces complete the look.",
+            styleTags: [],
+            occasionFit: null,
+          },
+        ],
+      };
+    },
+  };
+  const service = createStyleItemService(
+    wardrobe([selected, bottom]),
+    reasoner,
+    failingSource,
+  );
+  const wardrobeOnly = await service.recommend({
+    wardrobeItemId: selected.id,
+  });
+  const fallback = await service.recommend({
+    wardrobeItemId: selected.id,
+    useInspiration: true,
+  });
+
+  assert.equal(searches, 1);
+  assert.deepEqual(fallback, wardrobeOnly);
+  assert.equal(context?.inspiration, undefined);
+});
+
 test("candidate filtering removes unavailable, archived, redundant, season-incompatible, and formality-incompatible pieces", () => {
   const selected = item("selected", "Tops", { seasons: ["Summer"] });
   const valid = item("valid", "Bottoms", {
