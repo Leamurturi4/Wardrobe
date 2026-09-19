@@ -512,3 +512,249 @@ test("unavailable selections, Gemini failures, and malformed Gemini responses fa
       error.message.includes("invalid outfit"),
   );
 });
+
+const denimDirection = {
+  name: "Polished dark denim",
+  desiredCategories: ["Bottoms", "Shoes"] as const,
+  desiredTraits: ["dark denim", "straight leg", "loafers"],
+  colorDirection: ["ivory", "dark indigo"],
+  styleTags: ["polished"],
+  reasoning: "A soft blouse gains structure from darker, sharper pieces.",
+  sourceReferences: [
+    {
+      provider: "vogue.com",
+      title: "How to style a satin blouse",
+      url: "https://vogue.com/looks/1",
+    },
+  ],
+};
+const denimSource = (
+  directions: unknown[] = [denimDirection],
+): InspirationSource =>
+  ({
+    search: async () => ({ provider: "brave-search", directions }),
+  }) as unknown as InspirationSource;
+
+test("style directions are mapped onto owned pieces and carry their sources", async () => {
+  const selected = item("selected", "Tops", {
+    name: "Ivory satin blouse",
+    primaryColor: "Ivory",
+  });
+  const jeans = item("jeans", "Bottoms", {
+    name: "Dark selvedge jeans",
+    subcategory: "Jeans",
+    primaryColor: "Navy",
+    material: "Denim",
+    silhouette: "Straight",
+    structureLevel: "High",
+  });
+  const boots = item("boots", "Shoes", {
+    name: "Black Chelsea boots",
+    subcategory: "Boots",
+    material: "Leather",
+    structureLevel: "High",
+  });
+  let context: OutfitReasoningContext | undefined;
+  const reasoner: OutfitReasoner = {
+    recommend: async (value) => {
+      context = value;
+      return {
+        outfits: [
+          {
+            itemIds: [selected.id, jeans.id, boots.id],
+            title: "Polished contrast",
+            explanation:
+              "The dark denim grounds the fluid blouse and the boots stand in for loafers.",
+            styleTags: ["Minimalist"],
+            occasionFit: "Work",
+            directionName: "Polished dark denim",
+          },
+        ],
+      };
+    },
+  };
+  const result = await createStyleItemService(
+    wardrobe([selected, jeans, boots]),
+    reasoner,
+    denimSource(),
+  ).recommend({ wardrobeItemId: selected.id, useInspiration: true });
+
+  // The owned stand-ins reach the reasoner, not the external references.
+  assert.deepEqual(context?.directionMatches?.[0]?.name, "Polished dark denim");
+  assert(context?.directionMatches?.[0]?.itemIds.includes(jeans.id));
+  assert(
+    context?.directionMatches?.every((match) =>
+      match.itemIds.every((id) =>
+        context?.candidatePool.some((candidate) => candidate.id === id),
+      ),
+    ),
+  );
+  assert.equal(result.inspirationProvider, "brave-search");
+  const [outfit] = result.outfits;
+  assert(outfit?.itemIds.includes(selected.id));
+  assert.deepEqual(outfit?.itemIds, [selected.id, jeans.id, boots.id]);
+  assert.equal(outfit?.inspiration?.directionName, "Polished dark denim");
+  assert.equal(outfit?.inspiration?.summary, denimDirection.reasoning);
+  assert.deepEqual(
+    outfit?.inspiration?.sources.map((source) => source.url),
+    ["https://vogue.com/looks/1"],
+  );
+});
+
+test("provenance is only attached for a direction that actually exists", async () => {
+  const selected = item("selected", "Tops");
+  const bottom = item("bottom", "Bottoms");
+  const reasoner: OutfitReasoner = {
+    recommend: async () => ({
+      outfits: [
+        {
+          itemIds: [selected.id, bottom.id],
+          title: "Unattributed",
+          explanation: "The wardrobe pieces work together.",
+          styleTags: [],
+          occasionFit: null,
+          directionName: "A direction nobody extracted",
+        },
+      ],
+    }),
+  };
+  const result = await createStyleItemService(
+    wardrobe([selected, bottom]),
+    reasoner,
+    denimSource(),
+  ).recommend({ wardrobeItemId: selected.id, useInspiration: true });
+
+  assert.equal(result.outfits[0]?.inspiration, null);
+  assert.equal(result.inspirationProvider, "brave-search");
+});
+
+test("wardrobe-only recommendations carry no inspiration provenance", async () => {
+  const selected = item("selected", "Tops");
+  const bottom = item("bottom", "Bottoms");
+  const reasoner: OutfitReasoner = {
+    recommend: async () => ({
+      outfits: [
+        {
+          itemIds: [selected.id, bottom.id],
+          title: "Wardrobe only",
+          explanation: "The wardrobe pieces work together.",
+          styleTags: [],
+          occasionFit: null,
+        },
+      ],
+    }),
+  };
+  const result = await createStyleItemService(
+    wardrobe([selected, bottom]),
+    reasoner,
+  ).recommend({ wardrobeItemId: selected.id });
+
+  assert.equal(result.inspirationProvider, null);
+  assert.equal(result.outfits[0]?.inspiration, null);
+});
+
+test("style directions pull matching owned pieces into the candidate pool", () => {
+  const selected = item("selected", "Tops", {
+    primaryColor: "Ivory",
+    styleTags: ["Classic"],
+  });
+  const fillers = Array.from({ length: 5 }, (_, index) =>
+    item(`filler-${index}`, "Bottoms", {
+      primaryColor: "Navy",
+      styleTags: ["Classic"],
+      favorite: true,
+    }),
+  );
+  const denim = item("dark-denim", "Bottoms", {
+    name: "Dark selvedge jeans",
+    subcategory: "Jeans",
+    primaryColor: "Blue",
+    material: "Denim",
+    silhouette: "Straight",
+    structureLevel: "High",
+  });
+  const items = [selected, ...fillers, denim];
+  const request = { wardrobeItemId: selected.id };
+
+  const wardrobeOnly = buildCandidatePool(selected, items, profile, request);
+  const inspired = buildCandidatePool(selected, items, profile, request, [
+    denimDirection,
+  ]);
+
+  // Five stronger deterministic candidates crowd the denim out on their own.
+  assert.equal(
+    wardrobeOnly.some((candidate) => candidate.id === denim.id),
+    false,
+  );
+  assert(inspired.some((candidate) => candidate.id === denim.id));
+  assert.equal(inspired.length, wardrobeOnly.length + 1);
+});
+
+test("inspired mode still rejects invented IDs and outfits missing the selected item", async () => {
+  const selected = item("selected", "Tops");
+  const bottom = item("bottom", "Bottoms");
+  for (const itemIds of [[selected.id, "invented"], [bottom.id]]) {
+    const reasoner: OutfitReasoner = {
+      recommend: async () => ({
+        outfits: [
+          {
+            itemIds,
+            title: "Bad",
+            explanation: "Invalid IDs.",
+            styleTags: [],
+            occasionFit: null,
+            directionName: "Polished dark denim",
+          },
+        ],
+      }),
+    };
+    await assert.rejects(
+      () =>
+        createStyleItemService(
+          wardrobe([selected, bottom]),
+          reasoner,
+          denimSource(),
+        ).recommend({ wardrobeItemId: selected.id, useInspiration: true }),
+      (error: unknown) =>
+        error instanceof ClothingAnalysisError && error.status === 502,
+    );
+  }
+});
+
+test("a source that returns no usable directions falls back to wardrobe-only styling", async () => {
+  const selected = item("selected", "Tops");
+  const bottom = item("bottom", "Bottoms");
+  let context: OutfitReasoningContext | undefined;
+  const reasoner: OutfitReasoner = {
+    recommend: async (value) => {
+      context = value;
+      return {
+        outfits: [
+          {
+            itemIds: [selected.id, bottom.id],
+            title: "Wardrobe fallback",
+            explanation: "The existing wardrobe pieces complete the look.",
+            styleTags: [],
+            occasionFit: null,
+          },
+        ],
+      };
+    },
+  };
+  const service = createStyleItemService(
+    wardrobe([selected, bottom]),
+    reasoner,
+    denimSource([]),
+  );
+  const wardrobeOnly = await service.recommend({
+    wardrobeItemId: selected.id,
+  });
+  const fallback = await service.recommend({
+    wardrobeItemId: selected.id,
+    useInspiration: true,
+  });
+
+  assert.deepEqual(fallback, wardrobeOnly);
+  assert.equal(context?.inspiration, undefined);
+  assert.equal(context?.directionMatches, undefined);
+});

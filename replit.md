@@ -12,6 +12,7 @@ A premium, AI-powered personal styling web app — users digitize their wardrobe
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - Required in production: `DATABASE_URL` — Postgres connection string
 - Optional AI analysis env: `GEMINI_API_KEY` and `GEMINI_MODEL` (defaults to `gemini-2.5-flash-lite`). Without a key, wardrobe image analysis is unavailable but manual Add Item remains functional.
+- Optional online inspiration env: `INSPIRATION_SEARCH_API_KEY` (Brave Search API subscription token), plus `INSPIRATION_SEARCH_ENDPOINT`, `INSPIRATION_SEARCH_TIMEOUT_MS` (default 6000) and `INSPIRATION_CACHE_TTL_MS` (default 900000). Without a token, the Outfit Lab's Inspired mode silently falls back to Wardrobe Only recommendations.
 
 ## Stack
 
@@ -29,6 +30,19 @@ A premium, AI-powered personal styling web app — users digitize their wardrobe
 - `artifacts/ai-wardrobe/src/components/AppShell.tsx` — shared authenticated layout (sidebar + topbar), reused by every logged-in page
 - `artifacts/ai-wardrobe/src/pages/` — one file per route (landing, auth/_, dashboard, wardrobe/_, outfits/*, style-profile, shopping-assistant, beauty, friends, calendar, settings)
 - `artifacts/ai-wardrobe/src/lib/mock-*.ts` — placeholder/mock data per feature area (no backend wired up yet)
+
+## Style This Item pipeline
+
+`artifacts/api-server/src/services/` holds one recommendation engine, extended rather than duplicated for Inspired mode:
+
+- `inspiration.ts` — garment-metadata query generator and the `InspirationSource` abstraction
+- `inspiration-search.ts` — the Brave Search provider; normalizes provider payloads into `InspirationHit`s and deduplicates them. Provider-specific shapes never leave this file.
+- `inspiration-directions.ts` — Gemini turns hits into `StyleDirection`s and cites them by index, so the model can never emit a URL; similar directions are merged and ordered by how many references support them.
+- `inspiration-mapping.ts` — maps abstract directions onto owned wardrobe items using structured metadata (adaptive, not exact-match).
+- `inspiration-source.ts` — wires provider + Gemini + caches together. It never throws: any failure yields zero directions, which the engine treats as wardrobe-only.
+- `outfit-recommendation.ts` — deterministic filtering, direction-biased candidate pool, Gemini reasoning, strict real-ID validation, ranking.
+
+External search runs only when `useInspiration === true`, and results are cached per garment/query/options for the TTL.
 
 ## Architecture decisions
 

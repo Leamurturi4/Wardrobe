@@ -429,6 +429,16 @@
 .verdict-panel ul { margin: 18px 0; padding: 0; list-style: none; }
 .verdict-panel li { display: flex; align-items: center; gap: 7px; padding: 7px 0; border-bottom: 1px solid rgba(45,41,65,.25); font: 800 9px/1 Arial, sans-serif; text-transform: uppercase; letter-spacing: .04em; }
 .verdict-panel li svg { width: 14px; height: 14px; color: #314d3a; stroke-width: 3; }
+.inspired-note { margin: 16px 0; padding: 12px; background: rgba(255,246,233,.6); border: 2px solid var(--ink); box-shadow: 2px 2px 0 rgba(41,31,47,.3); }
+.inspired-badge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; color: #fff6e9; background: var(--plum); border: 1px solid var(--ink); font: 800 8px/1 "Courier New", monospace; text-transform: uppercase; letter-spacing: .12em; }
+.inspired-badge svg { width: 11px; height: 11px; }
+.inspired-note strong { display: block; margin: 9px 0 5px; color: #241a26; font: 800 13px/1.2 Georgia, serif; }
+.inspired-note p { margin: 0; color: #494158; font: 11px/1.5 Arial, sans-serif; }
+.sources-toggle { margin-top: 9px; padding: 5px 8px; color: #2a202b; background: #d9c8bd; border: 1px solid var(--ink); font: 800 8px/1 Arial, sans-serif; text-transform: uppercase; letter-spacing: .06em; cursor: pointer; }
+.inspired-sources { margin: 9px 0 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px; }
+.inspired-sources li { display: block; padding: 0; border: 0; }
+.inspired-sources a { display: inline-block; padding: 4px 6px; color: #2d3150; background: #e5d7cc; border: 1px solid var(--ink); font: 700 9px/1 "Courier New", monospace; text-decoration: none; }
+.inspired-sources a:hover { background: #f2e7dd; text-decoration: underline; }
 .save-look { width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 11px; color: #f7edf4; background: #423047; border: 2px solid var(--ink); box-shadow: inset 2px 2px #7b6480, inset -2px -2px #211923, 3px 3px 0 rgba(26,18,27,.28); font: 800 10px/1 Arial, sans-serif; text-transform: uppercase; cursor: pointer; }
 .save-look svg { width: 15px; height: 15px; }.save-look.is-saved { background: #345242; }
 .scan-idle { min-height: 390px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }

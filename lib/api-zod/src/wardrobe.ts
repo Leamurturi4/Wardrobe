@@ -595,9 +595,19 @@ export const inspirationResultSchema = z
     directions: z.array(styleDirectionSchema).max(10),
   })
   .strict();
+// Lightweight provenance attached to a recommendation: the styling direction it
+// followed plus the sources that suggested it. Never an external product.
+export const outfitInspirationSchema = z
+  .object({
+    directionName: text.min(1),
+    summary: z.string().trim().min(1).max(800),
+    sources: z.array(sourceReferenceSchema).max(6),
+  })
+  .strict();
 export type SourceReference = z.output<typeof sourceReferenceSchema>;
 export type StyleDirection = z.output<typeof styleDirectionSchema>;
 export type InspirationResult = z.output<typeof inspirationResultSchema>;
+export type OutfitInspiration = z.output<typeof outfitInspirationSchema>;
 export const styleItemRequestSchema = z
   .object({
     wardrobeItemId: text.min(1),
@@ -616,12 +626,14 @@ export const outfitRecommendationSchema = z
     styleTags: tags.max(8),
     occasionFit: text.nullable(),
     missingCategories: z.array(z.enum(categories)).max(categories.length),
+    inspiration: outfitInspirationSchema.nullable().default(null),
   })
   .strict();
 export const styleItemRecommendationsSchema = z
   .object({
     selectedItemId: text.min(1),
     outfits: z.array(outfitRecommendationSchema).min(1).max(5),
+    inspirationProvider: text.nullable().default(null),
   })
   .strict();
 export type OutfitRecommendation = z.output<typeof outfitRecommendationSchema>;

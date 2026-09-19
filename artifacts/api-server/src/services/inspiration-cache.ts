@@ -15,8 +15,8 @@ export type InspirationCacheOptions = {
   now?: () => number;
 };
 
-type CacheEntry = {
-  value: InspirationResult;
+type CacheEntry<Value> = {
+  value: Value;
   expiresAt: number;
 };
 
@@ -48,8 +48,17 @@ export function createInspirationCacheKey(input: InspirationCacheKey): string {
   });
 }
 
-export class InspirationCache {
-  readonly #entries = new Map<string, CacheEntry>();
+/** Cache key for the raw, normalized search hits of a single provider query. */
+export function createSearchHitsCacheKey(
+  provider: string,
+  query: string,
+): string {
+  return JSON.stringify([normalizeText(provider), normalizeText(query)]);
+}
+
+/** Minimal in-memory TTL store shared by the inspiration caches. */
+export class TtlCache<Value> {
+  readonly #entries = new Map<string, CacheEntry<Value>>();
   readonly #ttlMs: number;
   readonly #now: () => number;
 
@@ -63,28 +72,44 @@ export class InspirationCache {
     this.#now = now;
   }
 
-  get(key: InspirationCacheKey): InspirationResult | undefined {
-    const normalizedKey = createInspirationCacheKey(key);
-    const entry = this.#entries.get(normalizedKey);
+  get(key: string): Value | undefined {
+    const entry = this.#entries.get(key);
     if (!entry) return undefined;
     if (this.#now() >= entry.expiresAt) {
-      this.#entries.delete(normalizedKey);
+      this.#entries.delete(key);
       return undefined;
     }
     return entry.value;
   }
 
+  set(key: string, value: Value, ttlMs = this.#ttlMs): void {
+    if (!Number.isFinite(ttlMs) || ttlMs <= 0)
+      throw new RangeError("Inspiration cache TTL must be greater than zero");
+    this.#entries.set(key, { value, expiresAt: this.#now() + ttlMs });
+  }
+
+  clear(): void {
+    this.#entries.clear();
+  }
+}
+
+export class InspirationCache {
+  readonly #entries: TtlCache<InspirationResult>;
+
+  constructor(options: InspirationCacheOptions = {}) {
+    this.#entries = new TtlCache<InspirationResult>(options);
+  }
+
+  get(key: InspirationCacheKey): InspirationResult | undefined {
+    return this.#entries.get(createInspirationCacheKey(key));
+  }
+
   set(
     key: InspirationCacheKey,
     value: InspirationResult,
-    ttlMs = this.#ttlMs,
+    ttlMs?: number,
   ): void {
-    if (!Number.isFinite(ttlMs) || ttlMs <= 0)
-      throw new RangeError("Inspiration cache TTL must be greater than zero");
-    this.#entries.set(createInspirationCacheKey(key), {
-      value,
-      expiresAt: this.#now() + ttlMs,
-    });
+    this.#entries.set(createInspirationCacheKey(key), value, ttlMs);
   }
 
   clear(): void {

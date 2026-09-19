@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CloudSun,
+  Globe,
   Heart,
   Loader2,
   RotateCcw,
@@ -144,6 +145,7 @@ export default function GenerateOutfit() {
   const [style, setStyle] = useState("");
   const [formality, setFormality] = useState("");
   const [useInspiration, setUseInspiration] = useState(false);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
 
   const top = TOPS[topIndex % TOPS.length];
   const bottom = BOTTOMS[bottomIndex % BOTTOMS.length];
@@ -244,6 +246,7 @@ export default function GenerateOutfit() {
       );
       setRecommendations(result.outfits);
       setRecommendationIndex(0);
+      setSourcesOpen(false);
     } catch (error) {
       setRecommendations([]);
       setRecommendationError(
@@ -472,6 +475,49 @@ export default function GenerateOutfit() {
                       .filter(Boolean)
                       .join(" · ")}
                   </p>
+                  {recommendation.inspiration && (
+                    <div className="inspired-note">
+                      <span className="inspired-badge">
+                        <Globe aria-hidden="true" /> Inspired
+                      </span>
+                      <strong>
+                        {recommendation.inspiration.directionName}
+                      </strong>
+                      <p>{recommendation.inspiration.summary}</p>
+                      {recommendation.inspiration.sources.length > 0 && (
+                        <>
+                          <button
+                            type="button"
+                            className="sources-toggle"
+                            aria-expanded={sourcesOpen}
+                            onClick={() => setSourcesOpen((value) => !value)}
+                          >
+                            {sourcesOpen
+                              ? "Hide sources"
+                              : `Sources (${recommendation.inspiration.sources.length})`}
+                          </button>
+                          {sourcesOpen && (
+                            <ul className="inspired-sources">
+                              {recommendation.inspiration.sources.map(
+                                (source) => (
+                                  <li key={source.url}>
+                                    <a
+                                      href={source.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      title={source.title}
+                                    >
+                                      {source.provider}
+                                    </a>
+                                  </li>
+                                ),
+                              )}
+                            </ul>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
                   {recommendation.missingCategories.length > 0 && (
                     <p>
                       Still needed:{" "}
@@ -482,11 +528,12 @@ export default function GenerateOutfit() {
                     <div className="transport-controls">
                       <button
                         type="button"
-                        onClick={() =>
+                        onClick={() => {
+                          setSourcesOpen(false);
                           setRecommendationIndex((value) =>
                             wrap(value - 1, recommendations.length),
-                          )
-                        }
+                          );
+                        }}
                         aria-label="Previous recommendation"
                       >
                         <ChevronLeft />
@@ -496,11 +543,12 @@ export default function GenerateOutfit() {
                       </span>
                       <button
                         type="button"
-                        onClick={() =>
+                        onClick={() => {
+                          setSourcesOpen(false);
                           setRecommendationIndex((value) =>
                             wrap(value + 1, recommendations.length),
-                          )
-                        }
+                          );
+                        }}
                         aria-label="Next recommendation"
                       >
                         <ChevronRight />
@@ -541,7 +589,9 @@ export default function GenerateOutfit() {
                   </h2>
                   <p>
                     {recommendationError ||
-                      "Choose an item, then request wardrobe-only recommendations."}
+                      (useInspiration
+                        ? "Choose an item, then generate recommendations inspired by online styling patterns."
+                        : "Choose an item, then request wardrobe-only recommendations.")}
                   </p>
                   <div className="idle-bars">
                     <i />
