@@ -2,33 +2,31 @@ import { AppShell } from "@/components/layout/AppShell";
 import { ChevronLeft, Edit2, Trash2, Heart, Share, Calendar, Sparkles, AlertCircle } from "lucide-react";
 import { Link, useParams, useLocation } from "wouter";
 import { useState, useMemo } from "react";
-import { MOCK_WARDROBE } from "@/lib/mock-wardrobe";
+import { useWardrobeItem, useOutfits, useClosetMutation } from "@/lib/wardrobe-api";
+import { DataStatus } from "@/components/DataStatus";
 import { OutfitCard } from "@/components/outfits/OutfitCard";
-import { MOCK_OUTFITS } from "@/lib/mock-outfits";
+
 import { cn } from "@/lib/utils";
 
 export default function WardrobeDetail() {
   const { id } = useParams();
   const [, setLocation] = useLocation();
   
-  const [item, setItem] = useState(() => MOCK_WARDROBE.find(i => i.id === id) || MOCK_WARDROBE[0]);
-  
-  // Find outfits this item appears in
-  const relatedOutfits = useMemo(() => {
-    return MOCK_OUTFITS.filter(outfit => outfit.items.some(i => i.id === item.id));
-  }, [item.id]);
-
-  const toggleFavorite = () => {
-    setItem(prev => ({ ...prev, isFavorite: !prev.isFavorite }));
-  };
-
+  const query = useWardrobeItem(id);
+  const item = query.data;
+  const outfits = useOutfits();
+  const mutation = useClosetMutation();
+  const relatedOutfits = (outfits.data || []).filter(o => o.items.some(i => i.id === id));
+  const toggleFavorite = () => mutation.mutate({ path: 'wardrobe/' + id + '/favorite', method: 'POST' });
   const handleDelete = () => {
-    if (confirm("Are you sure you want to remove this item from your wardrobe?")) {
-      setLocation("/wardrobe");
-    }
+    if (confirm('Archive this item? Saved outfits will keep their references.'))
+      mutation.mutate({ path: 'wardrobe/' + id, method: 'DELETE' }, { onSuccess: () => setLocation('/wardrobe') });
   };
-
-  if (!item) return null;
+  const editNotes = () => {
+    const description = prompt('Care and styling notes', item?.description || '');
+    if (description !== null) mutation.mutate({ path: 'wardrobe/' + id, body: { description } });
+  };
+  if (!item) return <AppShell><DataStatus pending={query.isPending} error={query.error} /></AppShell>;
 
   return (
     <AppShell>
@@ -53,7 +51,7 @@ export default function WardrobeDetail() {
               <Share className="w-4 h-4" />
             </button>
             <div className="h-6 w-px bg-border mx-1" />
-            <button className="h-10 px-4 rounded-full bg-secondary/50 hover:bg-secondary flex items-center gap-2 transition-colors text-sm font-medium">
+            <button onClick={() => setLocation(`/wardrobe/${id}/edit`)} className="h-10 px-4 rounded-full bg-secondary/50 hover:bg-secondary flex items-center gap-2 transition-colors text-sm font-medium">
               <Edit2 className="w-4 h-4" /> Edit
             </button>
             <button onClick={handleDelete} className="w-10 h-10 rounded-full bg-red-50 dark:bg-red-500/10 hover:bg-red-100 dark:hover:bg-red-500/20 flex items-center justify-center transition-colors text-red-500">
@@ -152,7 +150,7 @@ export default function WardrobeDetail() {
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-serif font-medium">Stylist Notes</h3>
-                <button className="text-sm font-medium text-muted-foreground hover:text-foreground">Edit Notes</button>
+                <button onClick={editNotes} className="text-sm font-medium text-muted-foreground hover:text-foreground">Edit Notes</button>
               </div>
               <div className="p-5 rounded-2xl bg-secondary/20 border border-border">
                 {item.notes ? (

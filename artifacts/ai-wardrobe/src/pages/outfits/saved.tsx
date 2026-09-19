@@ -2,7 +2,8 @@ import { AppShell } from "@/components/layout/AppShell";
 import { Plus, Search, Filter, Layers, LayoutGrid } from "lucide-react";
 import { Link } from "wouter";
 import { useState, useMemo } from "react";
-import { MOCK_OUTFITS } from "@/lib/mock-outfits";
+import { useOutfits, useClosetMutation } from "@/lib/wardrobe-api";
+import { DataStatus } from "@/components/DataStatus";
 import { OutfitCard } from "@/components/outfits/OutfitCard";
 
 const SEASONS = ["All", "Spring", "Summer", "Autumn", "Winter"];
@@ -10,22 +11,21 @@ const SEASONS = ["All", "Spring", "Summer", "Autumn", "Winter"];
 export default function SavedOutfits() {
   const [search, setSearch] = useState("");
   const [activeSeason, setActiveSeason] = useState("All");
-  const [outfits, setOutfits] = useState(MOCK_OUTFITS);
+  const query = useOutfits();
+  const outfits = query.data || [];
+  const mutation = useClosetMutation();
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
 
   const filteredOutfits = useMemo(() => {
     return outfits.filter((outfit) => {
       const matchesSearch = outfit.name.toLowerCase().includes(search.toLowerCase()) || 
                             outfit.occasion.toLowerCase().includes(search.toLowerCase());
       const matchesSeason = activeSeason === "All" || outfit.season === activeSeason;
-      return matchesSearch && matchesSeason;
+      return matchesSearch && matchesSeason && (!favoritesOnly || outfit.favorite);
     });
-  }, [outfits, search, activeSeason]);
+  }, [outfits, search, activeSeason, favoritesOnly]);
 
-  const toggleFavorite = (id: string) => {
-    setOutfits(outfits.map(outfit => 
-      outfit.id === id ? { ...outfit, isFavorite: !outfit.isFavorite } : outfit
-    ));
-  };
+  const toggleFavorite = (id: string) => mutation.mutate({ path: `outfits/${id}/favorite`, method: "POST" });
 
   return (
     <AppShell>
@@ -70,13 +70,13 @@ export default function SavedOutfits() {
                 className="w-full h-10 pl-9 pr-4 rounded-xl border-none bg-secondary/50 text-sm focus:outline-none focus:ring-1 focus:ring-border transition-all"
               />
             </div>
-            <button className="h-10 w-10 shrink-0 flex items-center justify-center rounded-xl bg-secondary/50 hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground">
+            <button aria-label="Favorites only" aria-pressed={favoritesOnly} onClick={() => setFavoritesOnly(v => !v)} className="h-10 w-10 shrink-0 flex items-center justify-center rounded-xl bg-secondary/50 hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground">
               <Filter className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {filteredOutfits.length > 0 ? (
+        {query.isPending || query.error ? <DataStatus pending={query.isPending} error={query.error} /> : filteredOutfits.length > 0 ? (
           <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-6 space-y-6">
             {filteredOutfits.map((outfit, idx) => (
               <div 
@@ -106,12 +106,12 @@ export default function SavedOutfits() {
               </>
             ) : (
               <>
-                <p className="text-muted-foreground mb-8 max-w-sm">You haven't saved any outfits yet. Let the AI stylist put together some looks for you.</p>
+                <p className="text-muted-foreground mb-8 max-w-sm">You haven't saved any outfits yet. Build a look from your wardrobe.</p>
                 <Link 
                   href="/outfits/generate"
                   className="px-8 py-3 rounded-full bg-foreground text-background transition-colors text-sm font-medium hover:bg-foreground/90 shadow-sm"
                 >
-                  Generate First Outfit
+                  Build First Outfit
                 </Link>
               </>
             )}

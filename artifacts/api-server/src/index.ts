@@ -1,4 +1,8 @@
-import app from "./app";
+import { createApp } from "./app";
+import { createDatabase, migrate, seedDemo } from "@workspace/db";
+import { createWardrobeService } from "./services/wardrobe";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { logger } from "./lib/logger";
 
 const rawPort = process.env["PORT"];
@@ -15,11 +19,15 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-app.listen(port, (err) => {
-  if (err) {
-    logger.error({ err }, "Error listening on port");
-    process.exit(1);
-  }
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const database = createDatabase(process.env.DATABASE_URL, process.env.PGLITE_DATA_DIR);
+await migrate(database.db, path.join(root, "lib/db/migrations/0001_wardrobe.sql"));
+if (process.env.SEED_DEMO === "true") await seedDemo(database.db);
+const app = createApp(createWardrobeService(database.db), process.env.UPLOAD_DIR || path.join(root, ".local/uploads"));
+const server = app.listen(port, process.env.HOST || "127.0.0.1", () => {
 
   logger.info({ port }, "Server listening");
+});
+for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => {
+  server.close(() => { void database.close().then(() => process.exit(0)); });
 });

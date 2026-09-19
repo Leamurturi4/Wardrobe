@@ -1,7 +1,9 @@
 import { Heart, Calendar, MoreHorizontal } from "lucide-react";
 import { Link } from "wouter";
-import { Outfit } from "@/lib/mock-outfits";
+import { Outfit } from "@/lib/wardrobe-api";
 import { cn } from "@/lib/utils";
+import { useClosetMutation } from "@/lib/wardrobe-api";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 
 interface OutfitCardProps {
   outfit: Outfit;
@@ -9,6 +11,14 @@ interface OutfitCardProps {
 }
 
 export function OutfitCard({ outfit, onToggleFavorite }: OutfitCardProps) {
+  const mutation = useClosetMutation();
+  const rename = () => {
+    const name = prompt("Outfit name", outfit.name);
+    if (name !== null) mutation.mutate({ path: `outfits/${outfit.id}`, body: { name } });
+  };
+  const remove = () => {
+    if (confirm(`Delete ${outfit.name}?`)) mutation.mutate({ path: `outfits/${outfit.id}`, method: "DELETE" });
+  };
   return (
     <div className="group relative rounded-2xl border border-border bg-card overflow-hidden transition-all duration-500 hover:shadow-xl hover:shadow-primary/5 hover:-translate-y-1 mb-6 break-inside-avoid">
       <div className="relative bg-secondary/20 aspect-[4/5] overflow-hidden">
@@ -23,9 +33,12 @@ export function OutfitCard({ outfit, onToggleFavorite }: OutfitCardProps) {
         
         {/* Top actions */}
         <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-[-10px] group-hover:translate-y-0">
-          <button className="w-9 h-9 rounded-full bg-background/90 backdrop-blur-sm flex items-center justify-center text-foreground hover:bg-background transition-colors shadow-sm">
+          <DropdownMenu><DropdownMenuTrigger asChild><button aria-label={`Actions for ${outfit.name}`} className="w-9 h-9 rounded-full bg-background/90 backdrop-blur-sm flex items-center justify-center text-foreground hover:bg-background transition-colors shadow-sm">
             <MoreHorizontal className="w-4 h-4" />
-          </button>
+          </button></DropdownMenuTrigger><DropdownMenuContent>
+            <DropdownMenuItem onSelect={rename}>Rename</DropdownMenuItem>
+            <DropdownMenuItem onSelect={remove}>Delete</DropdownMenuItem>
+          </DropdownMenuContent></DropdownMenu>
         </div>
 
         {/* Floating composition preview */}
@@ -54,7 +67,8 @@ export function OutfitCard({ outfit, onToggleFavorite }: OutfitCardProps) {
           <button 
             onClick={(e) => {
               e.preventDefault();
-              onToggleFavorite?.(outfit.id);
+              if (onToggleFavorite) onToggleFavorite(outfit.id);
+              else mutation.mutate({ path: `outfits/${outfit.id}/favorite`, method: "POST" });
             }}
             className={cn(
               "w-8 h-8 shrink-0 rounded-full flex items-center justify-center transition-colors",

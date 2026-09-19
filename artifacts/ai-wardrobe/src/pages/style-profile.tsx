@@ -1,18 +1,22 @@
 import { AppShell } from "@/components/layout/AppShell";
-import { mockStyleProfile } from "@/lib/mock-profile";
+import { useStyleProfile } from "@/lib/wardrobe-api";
+import { DataStatus } from "@/components/DataStatus";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Brain, Sparkles, Target } from "lucide-react";
 
 export default function StyleProfile() {
+  const query = useStyleProfile();
+  const profile = query.data;
+  if (!profile) return <AppShell><DataStatus pending={query.isPending} error={query.error} /></AppShell>;
   return (
     <AppShell>
       <div className="max-w-5xl mx-auto space-y-12 animate-in fade-in slide-in-from-bottom-8 duration-700">
         <header className="space-y-4">
           <h1 className="text-4xl md:text-5xl font-serif font-medium tracking-tight">Style DNA</h1>
           <p className="text-muted-foreground text-lg max-w-2xl leading-relaxed">
-            Your personal aesthetic matrix. The AI continuously refines its understanding of your preferences, body architecture, and lifestyle.
+            Your saved aesthetic, color, and brand preferences.
           </p>
         </header>
 
@@ -27,18 +31,18 @@ export default function StyleProfile() {
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="font-medium">Algorithm Confidence</span>
-                  <span className="text-muted-foreground">{mockStyleProfile.confidenceScore}%</span>
+                  <span className="text-muted-foreground">{profile.confidence === null ? "Not analyzed" : `${Math.round(profile.confidence * 100)}%`}</span>
                 </div>
-                <Progress value={mockStyleProfile.confidenceScore} className="h-1" />
+                <Progress value={profile.confidence === null ? 0 : profile.confidence * 100} className="h-1" />
               </div>
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="font-medium">Learning Progress</span>
-                  <span className="text-muted-foreground">{mockStyleProfile.learningProgress}%</span>
+                  <span className="text-muted-foreground">{profile.learning.status}</span>
                 </div>
-                <Progress value={mockStyleProfile.learningProgress} className="h-1" />
+                <Progress value={0} className="h-1" />
                 <p className="text-xs text-muted-foreground pt-2 leading-relaxed">
-                  The model needs a few more seasonal transitions to reach maximum calibration. Keep logging outfits to improve accuracy.
+                  Learning is not enabled yet. These preferences are saved without AI analysis.
                 </p>
               </div>
             </CardContent>
@@ -50,7 +54,7 @@ export default function StyleProfile() {
                 <Sparkles className="w-4 h-4 mr-2" /> Core Aesthetics
               </h3>
               <div className="flex flex-wrap gap-2">
-                {mockStyleProfile.aesthetics.map(a => (
+                {profile.aestheticTags.map(a => (
                   <Badge key={a} variant="secondary" className="px-4 py-1.5 text-sm font-medium rounded-full bg-secondary/50 hover:bg-secondary transition-colors">
                     {a}
                   </Badge>
@@ -63,7 +67,7 @@ export default function StyleProfile() {
                 <Target className="w-4 h-4 mr-2" /> Atelier Preferences
               </h3>
               <div className="flex flex-wrap gap-2">
-                {mockStyleProfile.preferredBrands.map(b => (
+                {profile.preferredBrands.map(b => (
                   <Badge key={b} variant="outline" className="px-4 py-1.5 text-sm font-medium rounded-full border-border/50 hover:border-border transition-colors">
                     {b}
                   </Badge>
@@ -76,7 +80,7 @@ export default function StyleProfile() {
         <div className="space-y-6 pt-4">
           <h3 className="text-sm font-medium text-muted-foreground tracking-wide uppercase">Palette Architecture</h3>
           <div className="flex flex-wrap gap-4">
-            {mockStyleProfile.preferredColors.map((color, i) => (
+            {profile.preferredColors.map((color, i) => (
               <div key={i} className="group relative">
                 <div 
                   className="w-16 h-16 rounded-full shadow-sm border border-border/50 transition-transform group-hover:scale-105 duration-300"
@@ -93,7 +97,7 @@ export default function StyleProfile() {
             <span className="text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors">View full board &rarr;</span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
-            {mockStyleProfile.recentInspirations.map((item) => (
+            {profile.recentInspirations.map((item) => (
               <div key={item.id} className="group relative aspect-[3/4] overflow-hidden rounded-2xl bg-secondary/20">
                 <img 
                   src={item.image} 

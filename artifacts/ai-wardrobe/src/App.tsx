@@ -38,6 +38,7 @@ function Router() {
       
       <Route path="/wardrobe" component={Wardrobe} />
       <Route path="/wardrobe/add" component={AddWardrobeItem} />
+      <Route path="/wardrobe/:id/edit" component={AddWardrobeItem} />
       <Route path="/wardrobe/:id" component={WardrobeDetail} />
       
       <Route path="/outfits/generate" component={GenerateOutfit} />

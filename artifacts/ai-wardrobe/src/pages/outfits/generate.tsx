@@ -14,75 +14,18 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 
+import { useWardrobe, useClosetMutation, type WardrobeItem } from "@/lib/wardrobe-api";
+import { DataStatus } from "@/components/DataStatus";
+
 type ClosetPiece = {
+  id: string;
   name: string;
   note: string;
   image: string;
   tint: string;
 };
 
-const TOPS: ClosetPiece[] = [
-  {
-    name: "Midnight moto",
-    note: "black leather · fitted",
-    image: "/images/wardrobe/leather-jacket.png",
-    tint: "#242330",
-  },
-  {
-    name: "Silk day blouse",
-    note: "champagne · fluid",
-    image: "/images/silk-blouse.png",
-    tint: "#c6a9a4",
-  },
-  {
-    name: "Prep-school blazer",
-    note: "navy wool · tailored",
-    image: "/images/wardrobe/blazer.png",
-    tint: "#344267",
-  },
-  {
-    name: "Soft-focus knit",
-    note: "oat cashmere · relaxed",
-    image: "/images/wardrobe/sweater.png",
-    tint: "#b99f8b",
-  },
-];
-
-const BOTTOMS: ClosetPiece[] = [
-  {
-    name: "Indigo mini",
-    note: "dark denim · structured",
-    image: "/images/wardrobe/jeans.png",
-    tint: "#28344d",
-  },
-  {
-    name: "Campus classic",
-    note: "ink denim · straight",
-    image: "/images/outfits/outfit-1.png",
-    tint: "#4d3b4e",
-  },
-  {
-    name: "Cocoa tailoring",
-    note: "wool blend · polished",
-    image: "/images/outfits/outfit-2.png",
-    tint: "#7b5b56",
-  },
-  {
-    name: "After-dark denim",
-    note: "washed black · slim",
-    image: "/images/outfits/outfit-3.png",
-    tint: "#39363d",
-  },
-];
-
-const EXTRAS = [
-  { label: "Shoes", value: "White court sneakers", image: "/images/wardrobe/sneakers.png" },
-  { label: "Jewelry", value: "Tiny gold hoops", image: "/images/leather-tote.png" },
-  { label: "Bag", value: "Chocolate leather tote", image: "/images/leather-tote.png" },
-  { label: "More", value: "Sheer berry tights", image: "/images/moodboard-parisian.png" },
-];
-
-const wrap = (value: number, length: number) => (value + length) % length;
+const wrap = (value: number, length: number) => length ? (value + length) % length : 0;
 
 function PieceViewer({
   label,
@@ -126,6 +69,14 @@ function PieceViewer({
 }
 
 export default function GenerateOutfit() {
+  const query = useWardrobe();
+  const mutation = useClosetMutation();
+  const items = query.data || [];
+  const piece = (i: WardrobeItem): ClosetPiece => ({ id: i.id, name: i.name, note: [i.primaryColor, i.material, i.fit].filter(Boolean).join(' · '), image: i.imageUrl, tint: '#344267' });
+  const available = items.filter(i => i.availability === 'available' && i.maintenanceState === 'clean');
+  const TOPS = available.filter(i => ['Tops', 'Outerwear'].includes(i.category)).map(piece);
+  const BOTTOMS = available.filter(i => i.category === 'Bottoms').map(piece);
+  const EXTRAS = available.filter(i => ['Shoes', 'Bags', 'Jewelry', 'Accessories'].includes(i.category)).map(i => ({ id: i.id, label: i.category, value: i.name, image: i.imageUrl }));
   const [topIndex, setTopIndex] = useState(0);
   const [bottomIndex, setBottomIndex] = useState(0);
   const [isScanning, setIsScanning] = useState(false);
@@ -134,9 +85,14 @@ export default function GenerateOutfit() {
   const [activeExtra, setActiveExtra] = useState(0);
   const [saved, setSaved] = useState(false);
 
-  const top = TOPS[topIndex];
-  const bottom = BOTTOMS[bottomIndex];
-  const compatibility = useMemo(() => 88 + ((topIndex * 3 + bottomIndex * 5) % 11), [topIndex, bottomIndex]);
+  const top = TOPS[topIndex % TOPS.length];
+  const bottom = BOTTOMS[bottomIndex % BOTTOMS.length];
+  const extra = EXTRAS[activeExtra % EXTRAS.length];
+  useEffect(() => { setSaved(false); setHasVerdict(false); }, [top?.id, bottom?.id, extra?.id]);
+  const saveLook = () => {
+    mutation.mutate({ path: 'outfits', method: 'POST', body: { name: top.name + ' + ' + bottom.name, source: 'manual', favorite: true,
+      items: [{ itemId: top.id, role: 'top' }, { itemId: bottom.id, role: 'bottom' }, ...(extra ? [{ itemId: extra.id, role: extra.label }] : [])] } }, { onSuccess: () => setSaved(true) });
+  };
 
   const moveTop = (direction: number) => {
     setHasVerdict(false);
@@ -147,22 +103,11 @@ export default function GenerateOutfit() {
     setBottomIndex((current) => wrap(current + direction, BOTTOMS.length));
   };
 
-  const dressMe = () => {
-    if (isScanning) return;
-    setSaved(false);
-    setHasVerdict(false);
-    setIsScanning(true);
-    window.setTimeout(() => {
-      const nextTop = Math.floor(Math.random() * TOPS.length);
-      setTopIndex(nextTop);
-      setBottomIndex((nextTop + 2) % BOTTOMS.length);
-      setIsScanning(false);
-      setHasVerdict(true);
-    }, 900);
-  };
+  const dressMe = () => { setHasVerdict(true); };
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.target instanceof HTMLElement && /INPUT|TEXTAREA|SELECT/.test(event.target.tagName)) return;
       if (event.key === "ArrowUp") moveTop(-1);
       if (event.key === "ArrowDown") moveBottom(1);
       if (event.key === "ArrowLeft") moveTop(-1);
@@ -173,6 +118,8 @@ export default function GenerateOutfit() {
     return () => window.removeEventListener("keydown", onKeyDown);
   });
 
+  if (query.isPending || query.error) return <AppShell><DataStatus pending={query.isPending} error={query.error} /></AppShell>;
+  if (!top || !bottom) return <AppShell><p>Add an available top and bottom to your wardrobe to build a look.</p><a href="/wardrobe/add">Add clothing</a></AppShell>;
   return (
     <AppShell>
       <div className="clueless-page">
@@ -181,7 +128,7 @@ export default function GenerateOutfit() {
             <span className="eyebrow">Tuesday · 7:42 AM · Beverly Hills</span>
             <h1>Outfit Lab</h1>
           </div>
-          <p>Build it. Scan it. Wear it.</p>
+          <p>Build it. Save it. Wear it.</p>
         </div>
 
         <div className="closet-window">
@@ -204,7 +151,7 @@ export default function GenerateOutfit() {
               <button className="tiny-retro-button" type="button" onClick={() => { setTopIndex(0); setBottomIndex(0); setHasVerdict(false); }}>
                 <RotateCcw /> Start over
               </button>
-              <p className="keyboard-tip">Tip: use arrow keys to browse. Press D to dress.</p>
+              <p className="keyboard-tip">Tip: use arrow keys to browse. Press D to review.</p>
             </aside>
 
             <div className="outfit-machine">
@@ -218,18 +165,12 @@ export default function GenerateOutfit() {
             </div>
 
             <aside className={`verdict-panel ${hasVerdict ? "has-verdict" : ""}`} aria-live="polite">
-              <span className="panel-kicker">Fashion scan</span>
+              <span className="panel-kicker">Look preview</span>
               {hasVerdict ? (
                 <>
-                  <div className="score-ring" style={{ "--score": `${compatibility}%` } as CSSProperties}><strong>{compatibility}</strong><span>%</span></div>
-                  <h2>Totally works.</h2>
-                  <p>The sharp top and clean dark base have the right amount of tension.</p>
-                  <ul>
-                    <li><Check /> Proportion balanced</li>
-                    <li><Check /> Colors in harmony</li>
-                    <li><Check /> Day-to-night ready</li>
-                  </ul>
-                  <button type="button" className={`save-look ${saved ? "is-saved" : ""}`} onClick={() => setSaved((value) => !value)}>
+                  <h2>Your selected look.</h2>
+                  <p>A manual combination from your wardrobe. AI recommendations are not enabled yet.</p>
+                  <button type="button" className={`save-look ${saved ? "is-saved" : ""}`} onClick={saveLook} disabled={saved || mutation.isPending}>
                     {saved ? <Check /> : <Bookmark />} {saved ? "Saved to favorites" : "Save this look"}
                   </button>
                 </>
@@ -237,7 +178,7 @@ export default function GenerateOutfit() {
                 <div className="scan-idle">
                   <Sparkles />
                   <h2>Ready when you are.</h2>
-                  <p>Choose each piece yourself or let the closet find your match.</p>
+                  <p>Choose each piece, then review and save your look.</p>
                   <div className="idle-bars"><i /><i /><i /><i /><i /></div>
                 </div>
               )}
@@ -248,9 +189,9 @@ export default function GenerateOutfit() {
             <button type="button" className={`browse-button ${browseOpen ? "active" : ""}`} onClick={() => setBrowseOpen((value) => !value)}>
               <span>Browse</span><small>{browseOpen ? "close closet" : "see everything"}</small>
             </button>
-            <div className="console-status"><Heart /> 48 pieces catalogued <Star /> 12 favorites</div>
+            <div className="console-status"><Heart /> {items.length} pieces catalogued <Star /> {items.filter(i => i.favorite).length} favorites</div>
             <button type="button" className="dress-button" onClick={dressMe} disabled={isScanning}>
-              <WandSparkles /> {isScanning ? "Scanning..." : "Dress me"}
+              <WandSparkles /> Review look
             </button>
           </div>
 
@@ -279,7 +220,7 @@ export default function GenerateOutfit() {
             {EXTRAS.map((extra, index) => (
               <button
                 type="button"
-                key={extra.label}
+                key={extra.id}
                 className={activeExtra === index ? "selected-extra" : ""}
                 onClick={() => setActiveExtra(index)}
                 title={extra.value}
@@ -292,7 +233,7 @@ export default function GenerateOutfit() {
 
         <div className="selected-extra-note">
           <span>Finishing touch</span>
-          <strong>{EXTRAS[activeExtra].value}</strong>
+          <strong>{extra?.value || "No accessory selected"}</strong>
           <span>selected</span>
         </div>
       </div>

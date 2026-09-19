@@ -1,48 +1,65 @@
 import { AppShell } from "@/components/layout/AppShell";
 import { UploadCloud, Image as ImageIcon, Sparkles, Check, ChevronLeft, ArrowRight, Loader2 } from "lucide-react";
-import { Link, useLocation } from "wouter";
-import { useState, useEffect } from "react";
+import { Link, useLocation, useParams } from "wouter";
+import { useState, useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
+
+import { useWardrobeItem, useClosetMutation } from "@/lib/wardrobe-api";
+import { customFetch } from "@workspace/api-client-react";
+import { wardrobeInputSchema } from "@workspace/api-zod";
+import { DataStatus } from "@/components/DataStatus";
 
 type Step = "upload" | "processing" | "review";
 
 export default function AddWardrobeItem() {
+  const { id } = useParams();
+  const existing = useWardrobeItem(id);
+  const mutation = useClosetMutation();
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState<string | null>(null);
   const [, setLocation] = useLocation();
   const [step, setStep] = useState<Step>("upload");
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   
   // Form state
   const [formData, setFormData] = useState({
-    name: "Classic White Linen Shirt",
+    name: "",
     category: "Tops",
-    color: "White",
-    brand: "Acne Studios",
-    material: "Linen",
-    season: ["Spring", "Summer"],
-    occasion: ["Casual", "Smart Casual"]
+    color: "",
+    brand: "",
+    material: "",
+    season: [] as string[],
+    occasion: [] as string[]
   });
 
   // Handle drag and drop
   const [isDragging, setIsDragging] = useState(false);
 
-  const handleUpload = () => {
-    setImageUrl("/images/wardrobe/white-shirt.png");
-    setStep("processing");
-  };
-
   useEffect(() => {
-    if (step === "processing") {
-      const timer = setTimeout(() => {
-        setStep("review");
-      }, 3000);
-      return () => clearTimeout(timer);
+    if (existing.data) {
+      const i = existing.data;
+      setFormData({ name: i.name, category: i.category, color: i.primaryColor, brand: i.brand, material: i.material, season: i.seasons, occasion: i.occasions });
+      setImageUrl(i.originalImage); setStep("review");
     }
-  }, [step]);
-
-  const handleSave = () => {
-    // In a real app we would save to API here
-    setLocation("/wardrobe");
+  }, [existing.data]);
+  const handleUpload = async (file?: File) => {
+    if (!file) return;
+    setError(null); setStep("processing");
+    try {
+      const result = await customFetch<{ url: string }>("/api/images", { method: "POST", headers: { "Content-Type": file.type }, body: file });
+      setImageUrl(result.url); setStep("review");
+    } catch (e) { setError(e instanceof Error ? e.message : "Upload failed"); setStep("upload"); }
   };
+  const handleSave = () => {
+    setError(null);
+    const fields = { name: formData.name, category: formData.category, primaryColor: formData.color, brand: formData.brand, material: formData.material,
+      seasons: formData.season, occasions: formData.occasion, originalImage: imageUrl };
+    const parsed = wardrobeInputSchema.safeParse(fields);
+    if (!parsed.success) { setError(parsed.error.issues.map(i => i.path.join('.') + ': ' + i.message).join('; ')); return; }
+    mutation.mutate({ path: id ? 'wardrobe/' + id : 'wardrobe', method: id ? 'PATCH' : 'POST', body: id ? fields : parsed.data },
+      { onSuccess: () => setLocation(id ? '/wardrobe/' + id : '/wardrobe') });
+  };
+  if (id && !existing.data) return <AppShell><DataStatus pending={existing.isPending} error={existing.error} /></AppShell>;
 
   return (
     <AppShell>
@@ -52,11 +69,12 @@ export default function AddWardrobeItem() {
             <ChevronLeft className="w-5 h-5" />
           </Link>
           <div>
-            <h1 className="text-3xl font-serif font-medium tracking-tight">Add to Wardrobe</h1>
-            <p className="text-muted-foreground text-sm">Let AI analyze and categorize your clothing.</p>
+            <h1 className="text-3xl font-serif font-medium tracking-tight">{id ? "Edit Wardrobe Item" : "Add to Wardrobe"}</h1>
+            <p className="text-muted-foreground text-sm">Upload a photo and enter your clothing details.</p>
           </div>
         </div>
 
+        {error && <p role="alert">{error}</p>}
         {/* Progress steps */}
         <div className="flex items-center justify-between mb-8 max-w-2xl mx-auto relative">
           <div className="absolute left-0 top-1/2 -translate-y-1/2 w-full h-0.5 bg-secondary -z-10" />
@@ -66,7 +84,7 @@ export default function AddWardrobeItem() {
           
           {[
             { id: "upload", label: "Upload Image", icon: ImageIcon },
-            { id: "processing", label: "AI Analysis", icon: Sparkles },
+            { id: "processing", label: "Store Image", icon: Sparkles },
             { id: "review", label: "Review & Save", icon: Check }
           ].map((s, i) => {
             const isActive = step === s.id;
@@ -101,16 +119,17 @@ export default function AddWardrobeItem() {
               )}
               onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
               onDragLeave={() => setIsDragging(false)}
-              onDrop={(e) => { e.preventDefault(); setIsDragging(false); handleUpload(); }}
+              onDrop={(e) => { e.preventDefault(); setIsDragging(false); void handleUpload(e.dataTransfer.files[0]); }}
             >
               <div className="w-20 h-20 bg-secondary rounded-full flex items-center justify-center mb-6">
                 <UploadCloud className="w-8 h-8 text-foreground" />
               </div>
               <h3 className="text-xl font-serif font-medium mb-2">Drag and drop your image</h3>
-              <p className="text-muted-foreground mb-8 max-w-md">Upload a clear photo of the clothing item. Flat lays or clean background photos work best for accurate AI detection.</p>
+              <p className="text-muted-foreground mb-8 max-w-md">Upload a clear photo of the clothing item. Flat lays or clean background photos work best for a clear wardrobe photo. Maximum 5 MB.</p>
               
               <div className="flex gap-4">
-                <button onClick={handleUpload} className="px-6 py-3 rounded-full bg-foreground text-background font-medium hover:bg-foreground/90 transition-all flex items-center gap-2 shadow-sm">
+                <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={e => { void handleUpload(e.target.files?.[0]); }} />
+                <button onClick={() => fileInput.current?.click()} className="px-6 py-3 rounded-full bg-foreground text-background font-medium hover:bg-foreground/90 transition-all flex items-center gap-2 shadow-sm">
                   <ImageIcon className="w-4 h-4" /> Browse Files
                 </button>
               </div>
@@ -134,10 +153,10 @@ export default function AddWardrobeItem() {
                 </div>
               </div>
               
-              <h3 className="text-2xl font-serif font-medium mb-3">AI is analyzing your item...</h3>
+              <h3 className="text-2xl font-serif font-medium mb-3">Storing your image...</h3>
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <p>Detecting color, fabric, and style attributes.</p>
+                <p>Preparing your photo for manual review.</p>
               </div>
             </div>
           )}
@@ -149,10 +168,10 @@ export default function AddWardrobeItem() {
                 <div className="aspect-[3/4] rounded-2xl overflow-hidden bg-secondary relative border border-border">
                   <img src={imageUrl!} alt="Detected item" className="w-full h-full object-cover" />
                   <div className="absolute top-4 right-4 px-3 py-1.5 bg-background/80 backdrop-blur-md rounded-full text-xs font-medium border border-white/20 flex items-center gap-1.5 shadow-sm">
-                    <Sparkles className="w-3.5 h-3.5 text-primary" /> Auto-detected
+                    <Sparkles className="w-3.5 h-3.5 text-primary" /> Manual entry
                   </div>
                 </div>
-                <button className="w-full py-3 rounded-xl border border-border hover:bg-secondary transition-colors text-sm font-medium">
+                <button onClick={() => setStep("upload")} className="w-full py-3 rounded-xl border border-border hover:bg-secondary transition-colors text-sm font-medium">
                   Replace Image
                 </button>
               </div>
@@ -161,7 +180,7 @@ export default function AddWardrobeItem() {
               <div className="space-y-6">
                 <div>
                   <h3 className="text-xl font-serif font-medium mb-1">Review Details</h3>
-                  <p className="text-muted-foreground text-sm">Tap any field to edit the AI's suggestions.</p>
+                  <p className="text-muted-foreground text-sm">Enter the details you want to keep in your closet.</p>
                 </div>
 
                 <div className="space-y-4">
@@ -187,7 +206,7 @@ export default function AddWardrobeItem() {
                         <option>Bottoms</option>
                         <option>Outerwear</option>
                         <option>Shoes</option>
-                        <option>Accessories</option>
+                        <option>Accessories</option><option>Dresses</option><option>Bags</option><option>Jewelry</option>
                       </select>
                     </div>
                     <div className="space-y-2">
@@ -257,6 +276,7 @@ export default function AddWardrobeItem() {
                   </button>
                   <button 
                     onClick={handleSave}
+                    disabled={mutation.isPending}
                     className="px-8 py-3 rounded-full bg-foreground text-background font-medium hover:bg-foreground/90 transition-all flex items-center gap-2 shadow-sm"
                   >
                     Save to Wardrobe <ArrowRight className="w-4 h-4" />

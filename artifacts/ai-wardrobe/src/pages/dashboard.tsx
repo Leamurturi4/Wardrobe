@@ -12,19 +12,25 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 
-const STATS = [
-  { label: "Total Items", value: "124", icon: Shirt },
-  { label: "Saved Outfits", value: "32", icon: Heart },
-  { label: "Worn This Month", value: "45", icon: Clock },
-];
-
-const RECENT_ACTIVITY = [
-  { id: 1, type: "outfit", title: "Weekend Brunch Outfit", time: "2 hours ago", img: "/outfit-1.jpg" },
-  { id: 2, type: "item", title: "Added Navy Linen Blazer", time: "Yesterday", img: "/outfit-2.jpg" },
-  { id: 3, type: "item", title: "Added White Silk Blouse", time: "Yesterday", img: "/hero.jpg" },
-];
-
+import { useWardrobe, useOutfits, useClosetMutation } from "@/lib/wardrobe-api";
+import { DataStatus } from "@/components/DataStatus";
 export default function Dashboard() {
+  const wardrobe = useWardrobe();
+  const outfits = useOutfits();
+  const mutation = useClosetMutation();
+  const items = wardrobe.data || [];
+  const looks = outfits.data || [];
+  const pick = looks[0];
+  const STATS = [
+    { label: 'Total Items', value: items.length, icon: Shirt },
+    { label: 'Saved Outfits', value: looks.length, icon: Heart },
+    { label: 'Favorites', value: items.filter(i => i.favorite).length, icon: Clock },
+  ];
+  const RECENT_ACTIVITY = [...items.map(i => ({ id: i.id, title: i.name, time: i.updatedAt, img: i.imageUrl })),
+    ...looks.map(o => ({ id: o.id, title: o.name, time: o.updatedAt, img: o.imageUrl }))]
+    .sort((a,b) => Date.parse(b.time) - Date.parse(a.time)).slice(0, 3);
+  if (wardrobe.isPending || outfits.isPending || wardrobe.error || outfits.error)
+    return <AppShell><DataStatus pending={wardrobe.isPending || outfits.isPending} error={wardrobe.error || outfits.error} /></AppShell>;
   return (
     <AppShell>
       <div className="max-w-6xl mx-auto space-y-8 pb-12">
@@ -72,8 +78,8 @@ export default function Dashboard() {
               <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center mb-4 text-primary-foreground backdrop-blur-md">
                 <Sparkles className="w-5 h-5" />
               </div>
-              <h3 className="font-medium text-lg mb-1">Generate Outfit</h3>
-              <p className="text-primary-foreground/70 text-sm">AI styled for today</p>
+              <h3 className="font-medium text-lg mb-1">Build Outfit</h3>
+              <p className="text-primary-foreground/70 text-sm">Build from your wardrobe</p>
               <div className="absolute bottom-6 right-6 opacity-0 translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all">
                 <ArrowRight className="w-5 h-5" />
               </div>
@@ -110,7 +116,7 @@ export default function Dashboard() {
         <div className="grid lg:grid-cols-3 gap-8">
           {/* Main Content Area */}
           <div className="lg:col-span-2 space-y-8">
-            {/* Today's Pick */}
+            {/* Saved Look */}
             <motion.section 
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -118,52 +124,38 @@ export default function Dashboard() {
             >
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-serif font-medium">Today's Pick</h2>
-                <button className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
-                  <Sparkles className="w-3.5 h-3.5" /> Re-generate
-                </button>
+                <Link href="/outfits/generate" className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+                  <Sparkles className="w-3.5 h-3.5" /> Build a look
+                </Link>
               </div>
-              <div className="bg-card border border-border rounded-[2rem] p-4 flex flex-col md:flex-row gap-6 shadow-sm">
+              {pick ? <div className="bg-card border border-border rounded-[2rem] p-4 flex flex-col md:flex-row gap-6 shadow-sm">
                 <div className="w-full md:w-1/2 aspect-square rounded-[1.5rem] overflow-hidden relative">
-                  <img src="/outfit-1.jpg" alt="Today's outfit" className="w-full h-full object-cover" />
+                  <img src={pick.imageUrl} alt={pick.name} className="w-full h-full object-cover" />
                   <div className="absolute top-4 left-4 bg-background/80 backdrop-blur-md px-3 py-1.5 rounded-full text-xs font-medium border border-border shadow-sm">
-                    Office Day
+                    {pick.occasion || "Manual look"}
                   </div>
                 </div>
                 <div className="w-full md:w-1/2 flex flex-col py-2 pr-2">
-                  <h3 className="text-lg font-medium mb-2">Modern Minimalist</h3>
+                  <h3 className="text-lg font-medium mb-2">{pick.name}</h3>
                   <p className="text-muted-foreground text-sm mb-6 flex-1">
-                    Perfectly suited for today's weather in New York. The breathable linen keeps you cool, while the tailored silhouette maintains a professional edge.
+                    {pick.description || "A saved combination from your wardrobe."}
                   </p>
                   <div className="space-y-3 mb-6">
-                    <div className="flex items-center gap-3 text-sm">
-                      <div className="w-8 h-8 rounded-full bg-secondary overflow-hidden shrink-0">
-                         <img src="/outfit-1.jpg" alt="item" className="w-full h-full object-cover opacity-50" />
-                      </div>
-                      <span className="font-medium">Beige Linen Blazer</span>
-                    </div>
-                    <div className="flex items-center gap-3 text-sm">
-                      <div className="w-8 h-8 rounded-full bg-secondary overflow-hidden shrink-0">
-                         <img src="/hero.jpg" alt="item" className="w-full h-full object-cover opacity-50" />
-                      </div>
-                      <span className="font-medium">White Silk Camisole</span>
-                    </div>
-                    <div className="flex items-center gap-3 text-sm">
-                      <div className="w-8 h-8 rounded-full bg-secondary overflow-hidden shrink-0">
-                         <img src="/outfit-2.jpg" alt="item" className="w-full h-full object-cover opacity-50" />
-                      </div>
-                      <span className="font-medium">Tailored Trousers</span>
-                    </div>
+                    {pick.items.map(item => <Link key={item.id} href={'/wardrobe/' + item.id} className="flex items-center gap-3 text-sm">
+                      <div className="w-8 h-8 rounded-full bg-secondary overflow-hidden shrink-0"><img src={item.imageUrl} alt="" className="w-full h-full object-cover" /></div>
+                      <span className="font-medium">{item.name}</span>
+                    </Link>)}
                   </div>
                   <div className="flex gap-2">
-                    <button className="flex-1 h-10 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90 transition-all">
-                      Wear Today
+                    <button onClick={() => window.location.assign("/outfits/saved")} className="flex-1 h-10 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90 transition-all">
+                      Open Lookbook
                     </button>
-                    <button className="w-10 h-10 bg-secondary text-foreground rounded-xl flex items-center justify-center hover:bg-secondary/80 transition-all">
-                      <Heart className="w-4 h-4" />
+                    <button onClick={() => mutation.mutate({ path: `outfits/${pick.id}/favorite`, method: "POST" })} className="w-10 h-10 bg-secondary text-foreground rounded-xl flex items-center justify-center hover:bg-secondary/80 transition-all">
+                      <Heart className={pick.favorite ? "w-4 h-4 fill-current" : "w-4 h-4"} />
                     </button>
                   </div>
                 </div>
-              </div>
+              </div> : <p>No saved outfits yet.</p>}
             </motion.section>
             
             {/* Stats */}
@@ -212,7 +204,7 @@ export default function Dashboard() {
                       </div>
                       <div className="pt-1">
                         <h4 className="text-sm font-medium leading-tight group-hover:text-primary transition-colors">{activity.title}</h4>
-                        <p className="text-xs text-muted-foreground mt-1">{activity.time}</p>
+                        <p className="text-xs text-muted-foreground mt-1">{new Date(activity.time).toLocaleDateString()}</p>
                       </div>
                     </div>
                   ))}
@@ -233,9 +225,9 @@ export default function Dashboard() {
                 <span className="font-medium text-sm">Style Insight</span>
               </div>
               <p className="text-sm leading-relaxed mb-4">
-                You've worn your <span className="font-medium">Navy Linen Blazer</span> 3 times this month. Consider pairing it with your new white silk blouse for a fresh look.
+                Your closet contains {items.length} active pieces. Your saved preferences are available in Style DNA.
               </p>
-              <button className="text-sm font-medium text-primary hover:underline">View suggestion</button>
+              <Link href="/style-profile" className="text-sm font-medium text-primary hover:underline">View Style DNA</Link>
             </motion.section>
           </div>
         </div>

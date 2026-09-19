@@ -2,16 +2,20 @@ import { AppShell } from "@/components/layout/AppShell";
 import { Plus, Search, LayoutGrid, List, SlidersHorizontal } from "lucide-react";
 import { Link } from "wouter";
 import { useState, useMemo } from "react";
-import { MOCK_WARDROBE } from "@/lib/mock-wardrobe";
+import { useWardrobe, useClosetMutation } from "@/lib/wardrobe-api";
+import { DataStatus } from "@/components/DataStatus";
 import { ItemCard } from "@/components/wardrobe/ItemCard";
 
-const CATEGORIES = ["All", "Tops", "Bottoms", "Outerwear", "Shoes", "Accessories"];
+const CATEGORIES = ["All", "Tops", "Bottoms", "Outerwear", "Dresses", "Shoes", "Bags", "Accessories", "Jewelry"];
 
 export default function Wardrobe() {
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState("All");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
-  const [items, setItems] = useState(MOCK_WARDROBE);
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const query = useWardrobe({ search, ...(activeCategory !== "All" ? { category: activeCategory } : {}), ...(favoritesOnly ? { favorite: "true" } : {}) });
+  const items = query.data || [];
+  const mutation = useClosetMutation();
 
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
@@ -23,11 +27,7 @@ export default function Wardrobe() {
     });
   }, [items, search, activeCategory]);
 
-  const toggleFavorite = (id: string) => {
-    setItems(items.map(item => 
-      item.id === id ? { ...item, isFavorite: !item.isFavorite } : item
-    ));
-  };
+  const toggleFavorite = (id: string) => mutation.mutate({ path: `wardrobe/${id}/favorite`, method: "POST" });
 
   return (
     <AppShell>
@@ -86,13 +86,13 @@ export default function Wardrobe() {
                 <List className="w-4 h-4" />
               </button>
             </div>
-            <button className="h-10 w-10 shrink-0 flex items-center justify-center rounded-xl bg-secondary/50 hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground">
+            <button aria-label="Favorites only" aria-pressed={favoritesOnly} onClick={() => setFavoritesOnly(v => !v)} className="h-10 w-10 shrink-0 flex items-center justify-center rounded-xl bg-secondary/50 hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground">
               <SlidersHorizontal className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {filteredItems.length > 0 ? (
+        {query.isPending || query.error ? <DataStatus pending={query.isPending} error={query.error} /> : filteredItems.length > 0 ? (
           <div className={
             viewMode === "grid" 
               ? "grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6" 

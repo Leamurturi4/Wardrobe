@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useTheme } from "next-themes";
-import { User, Bell, Shield, Sparkles, Moon, Sun, CreditCard, Trash2, Badge } from "lucide-react";
+import { User, Bell, Shield, Sparkles, Moon, Sun, CreditCard, Trash2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 
 export default function Settings() {
   const { theme, setTheme } = useTheme();

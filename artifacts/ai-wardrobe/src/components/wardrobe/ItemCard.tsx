@@ -1,6 +1,6 @@
 import { Heart } from "lucide-react";
 import { Link } from "wouter";
-import { WardrobeItem } from "@/lib/mock-wardrobe";
+import { WardrobeItem } from "@/lib/wardrobe-api";
 import { cn } from "@/lib/utils";
 
 interface ItemCardProps {
