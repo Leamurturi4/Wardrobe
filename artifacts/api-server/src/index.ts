@@ -13,6 +13,7 @@ import {
   createStyleItemService,
 } from "./services/outfit-recommendation";
 import { noOpInspirationSource } from "./services/inspiration";
+import { createConfiguredInspirationSource } from "./services/inspiration-source";
 
 const rawPort = process.env["PORT"];
 
@@ -46,14 +47,20 @@ const geminiOptions = {
   apiKey: process.env.GEMINI_API_KEY,
   model: process.env.GEMINI_MODEL,
 };
+const geminiClient = createGeminiStructuredClient(geminiOptions);
+// Without search credentials the app stays on wardrobe-only recommendations.
+const inspirationSource =
+  createConfiguredInspirationSource(process.env, geminiClient, (error) =>
+    logger.warn({ err: error }, "Inspiration search degraded"),
+  ) ?? noOpInspirationSource;
 const app = createApp(
   wardrobeService,
   process.env.UPLOAD_DIR || path.join(root, ".local/uploads"),
   createGeminiClothingAnalyzer(geminiOptions),
   createStyleItemService(
     wardrobeService,
-    createGeminiOutfitReasoner(createGeminiStructuredClient(geminiOptions)),
-    noOpInspirationSource,
+    createGeminiOutfitReasoner(geminiClient),
+    inspirationSource,
   ),
 );
 const server = app.listen(port, process.env.HOST || "127.0.0.1", () => {

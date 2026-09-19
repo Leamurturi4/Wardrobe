@@ -17,6 +17,7 @@ import {
   createStyleItemService,
   type OutfitReasoningContext,
 } from "../src/services/outfit-recommendation";
+import type { InspirationSource } from "../src/services/inspiration";
 
 const migration = fileURLToPath(
   new URL("../../../lib/db/migrations/0001_wardrobe.sql", import.meta.url),
@@ -28,6 +29,7 @@ let base: string;
 let analyzerCalls = 0;
 let recommendationContext: OutfitReasoningContext | undefined;
 let recommendationResult: unknown = { outfits: [] };
+let inspirationDirections: unknown[] = [];
 const analysisResult: ClothingAnalysisResult = {
   suggestedName: "Ivory blouse",
   category: "Tops",
@@ -72,12 +74,21 @@ before(async () => {
         return analysisResult;
       },
     },
-    createStyleItemService(wardrobeService, {
-      recommend: async (context) => {
-        recommendationContext = context;
-        return recommendationResult;
+    createStyleItemService(
+      wardrobeService,
+      {
+        recommend: async (context) => {
+          recommendationContext = context;
+          return recommendationResult;
+        },
       },
-    }),
+      {
+        search: async () => ({
+          provider: "stub-search",
+          directions: inspirationDirections,
+        }),
+      } as unknown as InspirationSource,
+    ),
   );
   server = app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => server.once("listening", resolve));
@@ -497,6 +508,87 @@ test("style-item endpoint returns wardrobe-only looks and saves an AI-assisted o
     saved.body.items.map((member: { itemId: string }) => member.itemId),
     look.itemIds,
   );
+});
+
+test("inspired recommendations expose sources and still save unchanged", async () => {
+  const selected = (
+    await request("/wardrobe", "POST", {
+      ...input,
+      name: "Inspired anchor",
+      category: "Tops",
+      originalImage: "/uploads/inspired-anchor.jpg",
+    })
+  ).body;
+  const jeans = (
+    await request("/wardrobe", "POST", {
+      ...input,
+      name: "Dark selvedge jeans",
+      category: "Bottoms",
+      subcategory: "Jeans",
+      primaryColor: "Navy",
+      material: "Denim",
+      silhouette: "Straight",
+      originalImage: "/uploads/inspired-jeans.jpg",
+    })
+  ).body;
+  inspirationDirections = [
+    {
+      name: "Polished dark denim",
+      desiredCategories: ["Bottoms"],
+      desiredTraits: ["dark denim", "straight leg"],
+      colorDirection: ["dark indigo"],
+      styleTags: ["polished"],
+      reasoning: "Dark denim grounds a light top.",
+      sourceReferences: [
+        {
+          provider: "vogue.com",
+          title: "How to style a satin blouse",
+          url: "https://vogue.com/looks/1",
+        },
+      ],
+    },
+  ];
+  recommendationResult = {
+    outfits: [
+      {
+        itemIds: [selected.id, jeans.id],
+        title: "Polished dark denim",
+        explanation: "The dark denim grounds the light shirt.",
+        styleTags: ["Minimalist"],
+        occasionFit: "Work",
+        directionName: "Polished dark denim",
+      },
+    ],
+  };
+  const inspired = await request("/outfits/style-item", "POST", {
+    wardrobeItemId: selected.id,
+    useInspiration: true,
+  });
+
+  assert.equal(inspired.status, 200);
+  assert.equal(inspired.body.inspirationProvider, "stub-search");
+  const look = inspired.body.outfits[0];
+  assert.equal(look.inspiration.directionName, "Polished dark denim");
+  assert.deepEqual(
+    look.inspiration.sources.map((source: { url: string }) => source.url),
+    ["https://vogue.com/looks/1"],
+  );
+  assert(look.itemIds.includes(selected.id));
+
+  const saved = await request("/outfits", "POST", {
+    name: look.title,
+    source: "ai-assisted",
+    items: look.itemIds.map((itemId: string) => ({ itemId })),
+    styleTags: look.styleTags,
+    occasion: look.occasionFit,
+    recommendationExplanation: look.explanation,
+  });
+  assert.equal(saved.status, 201);
+  assert.deepEqual(
+    saved.body.items.map((member: { itemId: string }) => member.itemId),
+    look.itemIds,
+  );
+  inspirationDirections = [];
 });
 
 test("demo seed is idempotent and never resurrects deleted outfits", async () => {

@@ -9,6 +9,7 @@ import {
   z,
   type OutfitRecommendation,
   type InspirationResult,
+  type StyleDirection,
   type StyleItemRequest,
   type StyleItemRecommendations,
   type StyleProfile,
@@ -20,6 +21,12 @@ import {
 } from "./clothing-analysis";
 import { DomainError, type WardrobeService } from "./wardrobe";
 import { noOpInspirationSource, type InspirationSource } from "./inspiration";
+import {
+  directionAffinity,
+  mapDirectionsToWardrobe,
+  matchDirectionToWardrobe,
+  type DirectionMatch,
+} from "./inspiration-mapping";
 
 type OutfitDraft = {
   itemIds: string[];
@@ -27,6 +34,7 @@ type OutfitDraft = {
   explanation: string;
   styleTags: string[];
   occasionFit: string | null;
+  directionName?: string | null | undefined;
 };
 export type OutfitReasoningContext = {
   request: StyleItemRequest;
@@ -34,6 +42,7 @@ export type OutfitReasoningContext = {
   candidatePool: WardrobeItem[];
   styleProfile: StyleProfile;
   inspiration?: InspirationResult;
+  directionMatches?: DirectionMatch[];
 };
 export interface OutfitReasoner {
   recommend(context: OutfitReasoningContext): Promise<unknown>;
@@ -46,6 +55,7 @@ const draftSchema = z
     explanation: z.string().trim().min(1).max(800),
     styleTags: z.array(z.string().trim().min(1).max(200)).max(8),
     occasionFit: z.string().trim().min(1).max(200).nullable(),
+    directionName: z.string().trim().min(1).max(200).nullish(),
   })
   .strict();
 const draftsSchema = z
@@ -176,11 +186,17 @@ const candidateScore = (
   return score;
 };
 
+/**
+ * Deterministic candidate filtering. When style directions are supplied, items
+ * that express those directions are pulled forward, so an inspired look is
+ * still assembled from the same allowlisted, owned candidate pool.
+ */
 export function buildCandidatePool(
   selected: WardrobeItem,
   items: WardrobeItem[],
   profile: StyleProfile,
   request: StyleItemRequest,
+  directions: readonly StyleDirection[] = [],
 ): WardrobeItem[] {
   const eligible = items.filter(
     (item) =>
@@ -192,11 +208,14 @@ export function buildCandidatePool(
       hasSeasonOverlap(selected, item) &&
       requestedFormalityCompatible(item, request),
   );
+  const affinity = (item: WardrobeItem) =>
+    directions.length ? Math.min(directionAffinity(directions, item), 12) : 0;
   const byCategory = new Map<WardrobeItem["category"], WardrobeItem[]>();
   for (const item of eligible.sort(
     (a, b) =>
-      candidateScore(selected, b, profile, request) -
-        candidateScore(selected, a, profile, request) ||
+      candidateScore(selected, b, profile, request) +
+        affinity(b) -
+        (candidateScore(selected, a, profile, request) + affinity(a)) ||
       a.id.localeCompare(b.id),
   )) {
     const values = byCategory.get(item.category) ?? [];
@@ -205,9 +224,25 @@ export function buildCandidatePool(
       byCategory.set(item.category, values);
     }
   }
-  return categories
+  const pool = categories
     .flatMap((category) => byCategory.get(category) ?? [])
     .slice(0, 28);
+  if (!directions.length) return pool;
+  // Guarantee every direction has owned stand-ins to work with, even when a
+  // deterministically stronger piece would otherwise have crowded them out.
+  const chosen = new Set(pool.map((item) => item.id));
+  const extras: WardrobeItem[] = [];
+  for (const direction of directions)
+    for (const item of matchDirectionToWardrobe(direction, eligible, 3)) {
+      if (chosen.has(item.id)) continue;
+      chosen.add(item.id);
+      extras.push(item);
+    }
+  if (!extras.length) return pool;
+  const order = [...pool, ...extras].slice(0, 32);
+  return categories.flatMap((category) =>
+    order.filter((item) => item.category === category),
+  );
 }
 
 export function missingCategories(
@@ -270,6 +305,9 @@ export function createGeminiOutfitReasoner(
         context.selectedItem.id,
         ...context.candidatePool.map((item) => item.id),
       ];
+      const directionNames =
+        context.inspiration?.directions.map((direction) => direction.name) ??
+        [];
       const responseSchema = {
         type: "object",
         additionalProperties: false,
@@ -296,6 +334,14 @@ export function createGeminiOutfitReasoner(
                   items: { type: "string" },
                 },
                 occasionFit: { type: ["string", "null"] },
+                ...(directionNames.length
+                  ? {
+                      directionName: {
+                        type: ["string", "null"],
+                        enum: [...directionNames, null],
+                      },
+                    }
+                  : {}),
               },
               required: [
                 "itemIds",
@@ -303,6 +349,7 @@ export function createGeminiOutfitReasoner(
                 "explanation",
                 "styleTags",
                 "occasionFit",
+                ...(directionNames.length ? ["directionName"] : []),
               ],
             },
           },
@@ -322,11 +369,26 @@ export function createGeminiOutfitReasoner(
           preferredStyleTags: context.styleProfile.preferredStyleTags,
           preferredBrands: context.styleProfile.preferredBrands,
         },
-        ...(context.inspiration ? { inspiration: context.inspiration } : {}),
+        ...(context.inspiration
+          ? {
+              inspiration: {
+                // Strongest recurring direction first; sources stay server-side.
+                directions: context.inspiration.directions.map((direction) => ({
+                  name: direction.name,
+                  desiredCategories: direction.desiredCategories,
+                  desiredTraits: direction.desiredTraits,
+                  colorDirection: direction.colorDirection,
+                  styleTags: direction.styleTags,
+                  reasoning: direction.reasoning,
+                })),
+              },
+              ownedMatches: context.directionMatches ?? [],
+            }
+          : {}),
       };
       const prompt = `Build 3-4 distinct outfits around the selected wardrobe item using only IDs from the candidate pool below.
 The selectedItem.id must appear in every outfit. Never invent or alter an ID. Prefer complete category structures, but return the best partial look when inventory is insufficient.
-Use proportions, color harmony, formality, structure, texture, style direction, and Style DNA. Explanations must name concrete styling logic, not generic praise.${context.inspiration ? "\nUse the provided inspiration only as creative direction; it cannot supply wardrobe items or IDs." : ""}
+Use proportions, color harmony, formality, structure, texture, style direction, and Style DNA. Explanations must name concrete styling logic, not generic praise.${context.inspiration ? "\nUse the provided inspiration only as creative direction; it cannot supply wardrobe items or IDs. inspiration.directions are ordered strongest-first, and ownedMatches lists the candidate IDs that already express each direction: adapt the idea to what is owned instead of demanding an exact match, and set directionName to the direction an outfit follows (null when it follows none)." : ""}
 Do not recommend products, shopping, weather, trends, or online inspiration.\n\n${JSON.stringify(payload)}`;
       return client.generateJson({
         prompt,
@@ -391,7 +453,7 @@ export function createStyleItemService(
         .array(wardrobeItemSchema)
         .parse(await wardrobe.listItems({ status: "active" }));
       const profile = styleProfileSchema.parse(await wardrobe.getProfile());
-      const pool = buildCandidatePool(selected, items, profile, request);
+      let pool = buildCandidatePool(selected, items, profile, request);
       if (!pool.length) {
         return styleItemRecommendationsSchema.parse({
           selectedItemId: selected.id,
@@ -436,6 +498,22 @@ export function createStyleItemService(
           }
         }
       }
+      // Style directions bias the deterministic pool, then map onto the owned
+      // candidates that actually survived filtering.
+      let directionMatches: DirectionMatch[] = [];
+      if (inspiration) {
+        pool = buildCandidatePool(
+          selected,
+          items,
+          profile,
+          request,
+          inspiration.directions,
+        );
+        directionMatches = mapDirectionsToWardrobe(
+          inspiration.directions,
+          pool,
+        );
+      }
       let drafts: OutfitDraft[];
       try {
         drafts = draftsSchema.parse(
@@ -444,7 +522,7 @@ export function createStyleItemService(
             selectedItem: selected,
             candidatePool: pool,
             styleProfile: profile,
-            ...(inspiration ? { inspiration } : {}),
+            ...(inspiration ? { inspiration, directionMatches } : {}),
           }),
         ).outfits;
       } catch (error) {
@@ -457,6 +535,12 @@ export function createStyleItemService(
       const allowed = new Map(
         [selected, ...pool].map((item) => [item.id, item]),
       );
+      const directionsByName = new Map(
+        (inspiration?.directions ?? []).map((direction) => [
+          direction.name,
+          direction,
+        ]),
+      );
       const recommendations = drafts.map((draft) => {
         if (
           new Set(draft.itemIds).size !== draft.itemIds.length ||
@@ -468,9 +552,22 @@ export function createStyleItemService(
             "AI returned an invalid wardrobe item reference. Manual outfit building is still available.",
           );
         const members = draft.itemIds.map((id) => allowed.get(id)!);
+        const { directionName, ...outfit } = draft;
+        // Provenance comes from the direction itself, never from the model, so
+        // an outfit can only cite sources that actually informed its direction.
+        const direction = directionName
+          ? directionsByName.get(directionName)
+          : undefined;
         return outfitRecommendationSchema.parse({
-          ...draft,
+          ...outfit,
           missingCategories: missingCategories(selected.category, members),
+          inspiration: direction
+            ? {
+                directionName: direction.name,
+                summary: direction.reasoning,
+                sources: direction.sourceReferences.slice(0, 6),
+              }
+            : null,
         });
       });
       const deduplicated = [
@@ -506,6 +603,7 @@ export function createStyleItemService(
       return styleItemRecommendationsSchema.parse({
         selectedItemId: selected.id,
         outfits: ranked.slice(0, 4),
+        inspirationProvider: inspiration?.provider ?? null,
       });
     },
   };
