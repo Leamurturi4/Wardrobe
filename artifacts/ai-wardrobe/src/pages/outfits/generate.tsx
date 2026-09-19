@@ -6,6 +6,7 @@ import {
   ChevronRight,
   CloudSun,
   Heart,
+  Loader2,
   RotateCcw,
   Sparkles,
   Star,
@@ -14,8 +15,20 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 
-import { useWardrobe, useClosetMutation, type WardrobeItem } from "@/lib/wardrobe-api";
+import {
+  useWardrobe,
+  useClosetMutation,
+  type WardrobeItem,
+} from "@/lib/wardrobe-api";
 import { DataStatus } from "@/components/DataStatus";
+import { customFetch } from "@workspace/api-client-react";
+import {
+  formalities,
+  occasionValues,
+  styleDirections,
+  styleItemRecommendationsSchema,
+  type OutfitRecommendation,
+} from "@workspace/api-zod";
 
 type ClosetPiece = {
   id: string;
@@ -25,7 +38,8 @@ type ClosetPiece = {
   tint: string;
 };
 
-const wrap = (value: number, length: number) => length ? (value + length) % length : 0;
+const wrap = (value: number, length: number) =>
+  length ? (value + length) % length : 0;
 
 function PieceViewer({
   label,
@@ -46,20 +60,38 @@ function PieceViewer({
         <span>{label}</span>
         <span>{piece.note}</span>
       </div>
-      <div className={`piece-picture ${isScanning ? "is-scanning" : ""}`} style={{ "--piece-tint": piece.tint } as CSSProperties}>
+      <div
+        className={`piece-picture ${isScanning ? "is-scanning" : ""}`}
+        style={{ "--piece-tint": piece.tint } as CSSProperties}
+      >
         <img src={piece.image} alt={piece.name} />
         <div className="scan-line" />
         <span className="piece-name">{piece.name}</span>
       </div>
       <div className="transport-controls">
-        <button type="button" onClick={onPrevious} aria-label={`Previous ${label.toLowerCase()}`}>
+        <button
+          type="button"
+          onClick={onPrevious}
+          aria-label={`Previous ${label.toLowerCase()}`}
+        >
           <ChevronLeft aria-hidden="true" />
           <ChevronLeft aria-hidden="true" />
         </button>
-        <button type="button" onClick={onNext} aria-label={`Next ${label.toLowerCase()}`}>
+        <button
+          type="button"
+          onClick={onNext}
+          aria-label={`Next ${label.toLowerCase()}`}
+        >
           <ChevronRight aria-hidden="true" />
         </button>
-        <button type="button" onClick={() => { onNext(); onNext(); }} aria-label={`Skip ahead in ${label.toLowerCase()}`}>
+        <button
+          type="button"
+          onClick={() => {
+            onNext();
+            onNext();
+          }}
+          aria-label={`Skip ahead in ${label.toLowerCase()}`}
+        >
           <ChevronRight aria-hidden="true" />
           <ChevronRight aria-hidden="true" />
         </button>
@@ -72,11 +104,28 @@ export default function GenerateOutfit() {
   const query = useWardrobe();
   const mutation = useClosetMutation();
   const items = query.data || [];
-  const piece = (i: WardrobeItem): ClosetPiece => ({ id: i.id, name: i.name, note: [i.primaryColor, i.material, i.fit].filter(Boolean).join(' · '), image: i.imageUrl, tint: '#344267' });
-  const available = items.filter(i => i.availability === 'available' && i.maintenanceState === 'clean');
-  const TOPS = available.filter(i => ['Tops', 'Outerwear'].includes(i.category)).map(piece);
-  const BOTTOMS = available.filter(i => i.category === 'Bottoms').map(piece);
-  const EXTRAS = available.filter(i => ['Shoes', 'Bags', 'Jewelry', 'Accessories'].includes(i.category)).map(i => ({ id: i.id, label: i.category, value: i.name, image: i.imageUrl }));
+  const piece = (i: WardrobeItem): ClosetPiece => ({
+    id: i.id,
+    name: i.name,
+    note: [i.primaryColor, i.material, i.fit].filter(Boolean).join(" · "),
+    image: i.imageUrl,
+    tint: "#344267",
+  });
+  const available = items.filter(
+    (i) => i.availability === "available" && i.maintenanceState === "clean",
+  );
+  const TOPS = available.map(piece);
+  const BOTTOMS = available.filter((i) => i.category === "Bottoms").map(piece);
+  const EXTRAS = available
+    .filter((i) =>
+      ["Shoes", "Bags", "Jewelry", "Accessories"].includes(i.category),
+    )
+    .map((i) => ({
+      id: i.id,
+      label: i.category,
+      value: i.name,
+      image: i.imageUrl,
+    }));
   const [topIndex, setTopIndex] = useState(0);
   const [bottomIndex, setBottomIndex] = useState(0);
   const [isScanning, setIsScanning] = useState(false);
@@ -84,14 +133,79 @@ export default function GenerateOutfit() {
   const [browseOpen, setBrowseOpen] = useState(false);
   const [activeExtra, setActiveExtra] = useState(0);
   const [saved, setSaved] = useState(false);
+  const [recommendations, setRecommendations] = useState<
+    OutfitRecommendation[]
+  >([]);
+  const [recommendationIndex, setRecommendationIndex] = useState(0);
+  const [recommendationError, setRecommendationError] = useState<string | null>(
+    null,
+  );
+  const [occasion, setOccasion] = useState("");
+  const [style, setStyle] = useState("");
+  const [formality, setFormality] = useState("");
 
   const top = TOPS[topIndex % TOPS.length];
   const bottom = BOTTOMS[bottomIndex % BOTTOMS.length];
   const extra = EXTRAS[activeExtra % EXTRAS.length];
-  useEffect(() => { setSaved(false); setHasVerdict(false); }, [top?.id, bottom?.id, extra?.id]);
+  const recommendation =
+    recommendations[recommendationIndex % recommendations.length];
+  useEffect(() => {
+    setSaved(false);
+    setHasVerdict(false);
+    setRecommendations([]);
+    setRecommendationError(null);
+  }, [top?.id]);
+  useEffect(() => {
+    setSaved(false);
+    setHasVerdict(false);
+  }, [bottom?.id, extra?.id]);
   const saveLook = () => {
-    mutation.mutate({ path: 'outfits', method: 'POST', body: { name: top.name + ' + ' + bottom.name, source: 'manual', favorite: true,
-      items: [{ itemId: top.id, role: 'top' }, { itemId: bottom.id, role: 'bottom' }, ...(extra ? [{ itemId: extra.id, role: extra.label }] : [])] } }, { onSuccess: () => setSaved(true) });
+    if (recommendation) {
+      mutation.mutate(
+        {
+          path: "outfits",
+          method: "POST",
+          body: {
+            name: recommendation.title,
+            source: "ai-assisted",
+            favorite: true,
+            items: recommendation.itemIds.map((itemId) => ({
+              itemId,
+              role: items
+                .find((item) => item.id === itemId)
+                ?.category.toLowerCase(),
+            })),
+            styleTags: recommendation.styleTags,
+            occasion: recommendation.occasionFit || occasion,
+            recommendationExplanation: recommendation.explanation,
+          },
+        },
+        { onSuccess: () => setSaved(true) },
+      );
+      return;
+    }
+    const manualItems = [
+      { itemId: top.id, role: "selected" },
+      ...(bottom && bottom.id !== top.id
+        ? [{ itemId: bottom.id, role: "bottom" }]
+        : []),
+      ...(extra && extra.id !== top.id && extra.id !== bottom?.id
+        ? [{ itemId: extra.id, role: extra.label }]
+        : []),
+    ];
+    mutation.mutate(
+      {
+        path: "outfits",
+        method: "POST",
+        body: {
+          name: top.name + (bottom ? " + " + bottom.name : ""),
+          source: "manual",
+          favorite: true,
+          items: manualItems,
+        },
+      },
+      { onSuccess: () => setSaved(true) },
+    );
   };
 
   const moveTop = (direction: number) => {
@@ -103,23 +217,73 @@ export default function GenerateOutfit() {
     setBottomIndex((current) => wrap(current + direction, BOTTOMS.length));
   };
 
-  const dressMe = () => { setHasVerdict(true); };
+  const reviewManual = () => {
+    setRecommendations([]);
+    setRecommendationError(null);
+    setHasVerdict(true);
+  };
+  const styleThis = async () => {
+    setIsScanning(true);
+    setRecommendationError(null);
+    setSaved(false);
+    setHasVerdict(false);
+    try {
+      const result = styleItemRecommendationsSchema.parse(
+        await customFetch("/api/outfits/style-item", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            wardrobeItemId: top.id,
+            ...(occasion ? { occasion } : {}),
+            ...(style ? { style } : {}),
+            ...(formality ? { formality } : {}),
+          }),
+        }),
+      );
+      setRecommendations(result.outfits);
+      setRecommendationIndex(0);
+    } catch (error) {
+      setRecommendations([]);
+      setRecommendationError(
+        error instanceof Error
+          ? error.message
+          : "Could not create recommendations",
+      );
+    } finally {
+      setIsScanning(false);
+    }
+  };
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLElement && /INPUT|TEXTAREA|SELECT/.test(event.target.tagName)) return;
+      if (
+        event.target instanceof HTMLElement &&
+        /INPUT|TEXTAREA|SELECT/.test(event.target.tagName)
+      )
+        return;
       if (event.key === "ArrowUp") moveTop(-1);
       if (event.key === "ArrowDown") moveBottom(1);
       if (event.key === "ArrowLeft") moveTop(-1);
       if (event.key === "ArrowRight") moveBottom(1);
-      if (event.key.toLowerCase() === "d") dressMe();
+      if (event.key.toLowerCase() === "d") void styleThis();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   });
 
-  if (query.isPending || query.error) return <AppShell><DataStatus pending={query.isPending} error={query.error} /></AppShell>;
-  if (!top || !bottom) return <AppShell><p>Add an available top and bottom to your wardrobe to build a look.</p><a href="/wardrobe/add">Add clothing</a></AppShell>;
+  if (query.isPending || query.error)
+    return (
+      <AppShell>
+        <DataStatus pending={query.isPending} error={query.error} />
+      </AppShell>
+    );
+  if (!top)
+    return (
+      <AppShell>
+        <p>Add an available wardrobe item to style a look.</p>
+        <a href="/wardrobe/add">Add clothing</a>
+      </AppShell>
+    );
   return (
     <AppShell>
       <div className="clueless-page">
@@ -133,77 +297,271 @@ export default function GenerateOutfit() {
 
         <div className="closet-window">
           <div className="window-titlebar">
-            <div className="window-dots" aria-hidden="true"><i /><i /><i /></div>
+            <div className="window-dots" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+            </div>
             <span>CHER'S DIGITAL CLOSET // LOOK 04</span>
-            <div className="online-pill"><i /> online</div>
+            <div className="online-pill">
+              <i /> online
+            </div>
           </div>
 
           <div className="closet-grid">
             <aside className="brief-panel">
               <span className="panel-kicker">Today’s brief</span>
               <h2>School, then a last-minute dinner.</h2>
-              <div className="weather-chip"><CloudSun /> 72° · sunny</div>
+              <div className="weather-chip">
+                <CloudSun /> 72° · sunny
+              </div>
               <dl>
-                <div><dt>Vibe</dt><dd>Polished rebel</dd></div>
-                <div><dt>Priority</dt><dd>Comfort + impact</dd></div>
-                <div><dt>Palette</dt><dd><i className="swatch plum" /><i className="swatch navy" /><i className="swatch cream" /></dd></div>
+                <div>
+                  <dt>Occasion</dt>
+                  <dd>
+                    <select
+                      aria-label="Occasion"
+                      value={occasion}
+                      onChange={(event) => setOccasion(event.target.value)}
+                    >
+                      <option value="">Any</option>
+                      {occasionValues.map((value) => (
+                        <option key={value}>{value}</option>
+                      ))}
+                    </select>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Vibe</dt>
+                  <dd>
+                    <select
+                      aria-label="Style or vibe"
+                      value={style}
+                      onChange={(event) => setStyle(event.target.value)}
+                    >
+                      <option value="">Any</option>
+                      {styleDirections.map((value) => (
+                        <option key={value}>{value}</option>
+                      ))}
+                    </select>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Formality</dt>
+                  <dd>
+                    <select
+                      aria-label="Formality"
+                      value={formality}
+                      onChange={(event) => setFormality(event.target.value)}
+                    >
+                      <option value="">Any</option>
+                      {formalities.map((value) => (
+                        <option key={value}>{value}</option>
+                      ))}
+                    </select>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Palette</dt>
+                  <dd>
+                    <i className="swatch plum" />
+                    <i className="swatch navy" />
+                    <i className="swatch cream" />
+                  </dd>
+                </div>
               </dl>
-              <button className="tiny-retro-button" type="button" onClick={() => { setTopIndex(0); setBottomIndex(0); setHasVerdict(false); }}>
+              <button
+                className="tiny-retro-button"
+                type="button"
+                onClick={() => {
+                  setTopIndex(0);
+                  setBottomIndex(0);
+                  setHasVerdict(false);
+                }}
+              >
                 <RotateCcw /> Start over
               </button>
-              <p className="keyboard-tip">Tip: use arrow keys to browse. Press D to review.</p>
+              <button
+                className="tiny-retro-button"
+                type="button"
+                onClick={reviewManual}
+              >
+                Review manual pairing
+              </button>
+              <p className="keyboard-tip">
+                Tip: use arrow keys to browse. Press D to style the selected
+                item.
+              </p>
             </aside>
 
             <div className="outfit-machine">
               <div className="machine-heading">
                 <span>Match station</span>
-                <strong>{String(topIndex + 1).padStart(2, "0")} / {String(TOPS.length).padStart(2, "0")}</strong>
+                <strong>
+                  {String(topIndex + 1).padStart(2, "0")} /{" "}
+                  {String(TOPS.length).padStart(2, "0")}
+                </strong>
               </div>
-              <PieceViewer label="Tops" piece={top} onPrevious={() => moveTop(-1)} onNext={() => moveTop(1)} isScanning={isScanning} />
-              <div className="machine-seam"><span>combine with</span></div>
-              <PieceViewer label="Bottoms" piece={bottom} onPrevious={() => moveBottom(-1)} onNext={() => moveBottom(1)} isScanning={isScanning} />
+              <PieceViewer
+                label="Selected item"
+                piece={top}
+                onPrevious={() => moveTop(-1)}
+                onNext={() => moveTop(1)}
+                isScanning={isScanning}
+              />
+              <div className="machine-seam">
+                <span>manual pair with</span>
+              </div>
+              {bottom ? (
+                <PieceViewer
+                  label="Bottoms"
+                  piece={bottom}
+                  onPrevious={() => moveBottom(-1)}
+                  onNext={() => moveBottom(1)}
+                  isScanning={isScanning}
+                />
+              ) : (
+                <p>
+                  Add a bottom for manual pairing. Style This Item can still
+                  return a partial look.
+                </p>
+              )}
             </div>
 
-            <aside className={`verdict-panel ${hasVerdict ? "has-verdict" : ""}`} aria-live="polite">
+            <aside
+              className={`verdict-panel ${hasVerdict ? "has-verdict" : ""}`}
+              aria-live="polite"
+            >
               <span className="panel-kicker">Look preview</span>
-              {hasVerdict ? (
+              {recommendation ? (
+                <>
+                  <h2>{recommendation.title}</h2>
+                  <p>{recommendation.explanation}</p>
+                  <p>
+                    {recommendation.itemIds
+                      .map((id) => items.find((item) => item.id === id)?.name)
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                  {recommendation.missingCategories.length > 0 && (
+                    <p>
+                      Still needed:{" "}
+                      {recommendation.missingCategories.join(", ")}
+                    </p>
+                  )}
+                  {recommendations.length > 1 && (
+                    <div className="transport-controls">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setRecommendationIndex((value) =>
+                            wrap(value - 1, recommendations.length),
+                          )
+                        }
+                        aria-label="Previous recommendation"
+                      >
+                        <ChevronLeft />
+                      </button>
+                      <span>
+                        {recommendationIndex + 1} / {recommendations.length}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setRecommendationIndex((value) =>
+                            wrap(value + 1, recommendations.length),
+                          )
+                        }
+                        aria-label="Next recommendation"
+                      >
+                        <ChevronRight />
+                      </button>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    className={`save-look ${saved ? "is-saved" : ""}`}
+                    onClick={saveLook}
+                    disabled={saved || mutation.isPending}
+                  >
+                    {saved ? <Check /> : <Bookmark />}{" "}
+                    {saved ? "Saved to favorites" : "Save this look"}
+                  </button>
+                </>
+              ) : hasVerdict ? (
                 <>
                   <h2>Your selected look.</h2>
-                  <p>A manual combination from your wardrobe. AI recommendations are not enabled yet.</p>
-                  <button type="button" className={`save-look ${saved ? "is-saved" : ""}`} onClick={saveLook} disabled={saved || mutation.isPending}>
-                    {saved ? <Check /> : <Bookmark />} {saved ? "Saved to favorites" : "Save this look"}
+                  <p>A manual combination from your wardrobe.</p>
+                  <button
+                    type="button"
+                    className={`save-look ${saved ? "is-saved" : ""}`}
+                    onClick={saveLook}
+                    disabled={saved || mutation.isPending}
+                  >
+                    {saved ? <Check /> : <Bookmark />}{" "}
+                    {saved ? "Saved to favorites" : "Save this look"}
                   </button>
                 </>
               ) : (
                 <div className="scan-idle">
                   <Sparkles />
-                  <h2>Ready when you are.</h2>
-                  <p>Choose each piece, then review and save your look.</p>
-                  <div className="idle-bars"><i /><i /><i /><i /><i /></div>
+                  <h2>
+                    {recommendationError
+                      ? "Could not style this item."
+                      : "Ready when you are."}
+                  </h2>
+                  <p>
+                    {recommendationError ||
+                      "Choose an item, then request wardrobe-only recommendations."}
+                  </p>
+                  <div className="idle-bars">
+                    <i />
+                    <i />
+                    <i />
+                    <i />
+                    <i />
+                  </div>
                 </div>
               )}
             </aside>
           </div>
 
           <div className="action-console">
-            <button type="button" className={`browse-button ${browseOpen ? "active" : ""}`} onClick={() => setBrowseOpen((value) => !value)}>
-              <span>Browse</span><small>{browseOpen ? "close closet" : "see everything"}</small>
+            <button
+              type="button"
+              className={`browse-button ${browseOpen ? "active" : ""}`}
+              onClick={() => setBrowseOpen((value) => !value)}
+            >
+              <span>Browse</span>
+              <small>{browseOpen ? "close closet" : "see everything"}</small>
             </button>
-            <div className="console-status"><Heart /> {items.length} pieces catalogued <Star /> {items.filter(i => i.favorite).length} favorites</div>
-            <button type="button" className="dress-button" onClick={dressMe} disabled={isScanning}>
-              <WandSparkles /> Review look
+            <div className="console-status">
+              <Heart /> {items.length} pieces catalogued <Star />{" "}
+              {items.filter((i) => i.favorite).length} favorites
+            </div>
+            <button
+              type="button"
+              className="dress-button"
+              onClick={() => void styleThis()}
+              disabled={isScanning}
+            >
+              {isScanning ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <WandSparkles />
+              )}{" "}
+              {isScanning ? "Styling..." : "Style this item"}
             </button>
           </div>
 
           {browseOpen && (
             <div className="closet-tray">
-              {[...TOPS, ...BOTTOMS].map((piece, index) => (
+              {TOPS.map((piece, index) => (
                 <button
                   type="button"
                   key={`${piece.name}-${index}`}
                   onClick={() => {
-                    if (index < TOPS.length) setTopIndex(index);
-                    else setBottomIndex(index - TOPS.length);
+                    setTopIndex(index);
                     setHasVerdict(false);
                   }}
                 >
@@ -215,8 +573,12 @@ export default function GenerateOutfit() {
           )}
 
           <nav className="category-strip" aria-label="Closet categories">
-            <button type="button" className="active">Tops</button>
-            <button type="button" onClick={() => setBrowseOpen(true)}>Bottoms</button>
+            <button type="button" className="active">
+              All items
+            </button>
+            <button type="button" onClick={() => setBrowseOpen(true)}>
+              Bottoms
+            </button>
             {EXTRAS.map((extra, index) => (
               <button
                 type="button"

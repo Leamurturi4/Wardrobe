@@ -10,7 +10,8 @@ A premium, AI-powered personal styling web app — users digitize their wardrobe
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec (not yet needed — no backend wired up)
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- Required in production: `DATABASE_URL` — Postgres connection string
+- Optional AI analysis env: `GEMINI_API_KEY` and `GEMINI_MODEL` (defaults to `gemini-2.5-flash-lite`). Without a key, wardrobe image analysis is unavailable but manual Add Item remains functional.
 
 ## Stack
 
@@ -26,7 +27,7 @@ A premium, AI-powered personal styling web app — users digitize their wardrobe
 - `artifacts/ai-wardrobe/` — the frontend app (React + Vite, served at `/`)
 - `artifacts/ai-wardrobe/src/index.css` — design tokens (colors, typography, radius) for light/dark mode
 - `artifacts/ai-wardrobe/src/components/AppShell.tsx` — shared authenticated layout (sidebar + topbar), reused by every logged-in page
-- `artifacts/ai-wardrobe/src/pages/` — one file per route (landing, auth/*, dashboard, wardrobe/*, outfits/*, style-profile, shopping-assistant, beauty, friends, calendar, settings)
+- `artifacts/ai-wardrobe/src/pages/` — one file per route (landing, auth/_, dashboard, wardrobe/_, outfits/*, style-profile, shopping-assistant, beauty, friends, calendar, settings)
 - `artifacts/ai-wardrobe/src/lib/mock-*.ts` — placeholder/mock data per feature area (no backend wired up yet)
 
 ## Architecture decisions
