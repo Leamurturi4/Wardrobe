@@ -104,6 +104,40 @@ test("the online pipeline searches, normalizes, and returns extracted directions
   assert.equal(calls[0], 3);
 });
 
+test("the online pipeline searches from the combined anchor set", async () => {
+  const jeans = wardrobeItemSchema.parse({
+    id: "jeans",
+    name: "Dark denim jeans",
+    category: "Bottoms",
+    subcategory: "Jeans",
+    primaryColor: "Navy",
+    materialCandidates: ["Denim"],
+    originalImage: "/uploads/jeans.jpg",
+    createdAt: now,
+    updatedAt: now,
+  });
+  const queries: string[] = [];
+  let extractedAnchors = 0;
+  const source = createOnlineInspirationSource({
+    provider: stubProvider(async (query) => {
+      queries.push(query);
+      return [hit(`https://example.com/combined-${queries.length}`, query)];
+    }),
+    extractor: {
+      extract: async (input) => {
+        extractedAnchors = input.garments?.length ?? 1;
+        return [direction];
+      },
+    },
+  });
+  const result = await source.searchAnchors?.([blouse, jeans], {
+    occasion: "Work",
+  });
+  assert.equal(result?.provider, "stub-search");
+  assert.match(queries[0] ?? "", /ivory satin blouse navy denim jeans outfit/);
+  assert.equal(extractedAnchors, 2);
+});
+
 test("search queries describe the garment only and leak no personal data", async () => {
   const queries: string[] = [];
   const { extractor } = stubExtractor();

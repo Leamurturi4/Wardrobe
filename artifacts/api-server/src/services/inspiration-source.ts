@@ -5,6 +5,7 @@ import {
 } from "@workspace/api-zod";
 import type { GeminiStructuredClient } from "./clothing-analysis";
 import {
+  generateCombinedInspirationQueries,
   generateInspirationQueries,
   type InspirationSource,
 } from "./inspiration";
@@ -62,16 +63,21 @@ export function createOnlineInspirationSource({
   const report = (error: unknown) => {
     onError?.(error);
   };
-  return {
-    async search(selectedGarment: WardrobeItem, options) {
+  const search = async (
+    selectedGarments: readonly WardrobeItem[],
+    options: Parameters<InspirationSource["search"]>[1],
+  ) => {
       if (!provider.configured) return empty;
       try {
-        const queries = generateInspirationQueries(selectedGarment).slice(
+        const queries = (selectedGarments.length === 1
+          ? generateInspirationQueries(selectedGarments[0]!)
+          : generateCombinedInspirationQueries(selectedGarments)
+        ).slice(
           0,
           maxQueries,
         );
         if (!queries.length) return empty;
-        const cacheKey = { selectedGarment, queries, options };
+        const cacheKey = { selectedGarments, queries, options };
         const cached = cache.get(cacheKey);
         if (cached) return cached;
 
@@ -95,7 +101,8 @@ export function createOnlineInspirationSource({
         if (!hits.length) return empty;
 
         const directions = await extractor.extract({
-          garment: selectedGarment,
+          garment: selectedGarments[0]!,
+          garments: selectedGarments,
           hits,
           options,
         });
@@ -110,6 +117,13 @@ export function createOnlineInspirationSource({
         report(error);
         return empty;
       }
+  };
+  return {
+    search(selectedGarment, options) {
+      return search([selectedGarment], options);
+    },
+    searchAnchors(selectedGarments, options) {
+      return search(selectedGarments, options);
     },
   };
 }

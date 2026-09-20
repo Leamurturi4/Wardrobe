@@ -92,6 +92,43 @@ export function generateInspirationQueries(
   return results;
 }
 
+/** Queries that describe the combined outfit anchors without sending IDs or notes. */
+export function generateCombinedInspirationQueries(
+  garments: readonly InspirationQueryGarment[],
+): string[] {
+  if (garments.length === 1) return generateInspirationQueries(garments[0]!);
+  const itemPhrases = garments.map((garment) => {
+    const category = categoryFallback[garment.category];
+    const subcategory = descriptor(garment.subcategory);
+    const item = subcategory && subcategory !== "other" ? subcategory : category;
+    return query(
+      descriptor(garment.primaryColor),
+      garment.materialCandidates.map(descriptor).find(Boolean),
+      item,
+    );
+  });
+  const sharedStyle = garments.flatMap((garment) => garment.styleTags)
+    .map(descriptor)
+    .find(Boolean);
+  const sharedFormality = garments.map((garment) => descriptor(garment.formality))
+    .find(Boolean);
+  const base = query(...itemPhrases);
+  const candidates = [
+    query(base, "outfit"),
+    query(base, sharedFormality, "outfit"),
+    query(base, sharedStyle, "styling"),
+    query(base, "layering ideas"),
+    query(base, "accessories"),
+  ];
+  const results: string[] = [];
+  for (const candidate of candidates) {
+    if (candidate && !results.some((existing) => isSimilar(existing, candidate)))
+      results.push(candidate);
+    if (results.length === 5) break;
+  }
+  return results;
+}
+
 export type InspirationSearchOptions = Pick<
   StyleItemRequest,
   "occasion" | "style" | "formality"
@@ -100,6 +137,10 @@ export type InspirationSearchOptions = Pick<
 export interface InspirationSource {
   search(
     selectedGarment: WardrobeItem,
+    options: InspirationSearchOptions,
+  ): Promise<InspirationResult>;
+  searchAnchors?(
+    selectedGarments: readonly WardrobeItem[],
     options: InspirationSearchOptions,
   ): Promise<InspirationResult>;
 }

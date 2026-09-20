@@ -5,7 +5,8 @@ import type {
 } from "./inspiration";
 
 export type InspirationCacheKey = {
-  selectedGarment: InspirationQueryGarment;
+  selectedGarment?: InspirationQueryGarment;
+  selectedGarments?: readonly InspirationQueryGarment[];
   queries: readonly string[];
   options: InspirationSearchOptions;
 };
@@ -28,17 +29,18 @@ const normalizeList = (values: readonly string[]) =>
   [...new Set(values.map(normalizeText).filter(Boolean))].sort();
 
 export function createInspirationCacheKey(input: InspirationCacheKey): string {
+  const garments = input.selectedGarments ?? (input.selectedGarment ? [input.selectedGarment] : []);
   return JSON.stringify({
-    selectedGarment: {
-      category: normalizeText(input.selectedGarment.category),
-      subcategory: normalizeText(input.selectedGarment.subcategory),
-      primaryColor: normalizeText(input.selectedGarment.primaryColor),
+    selectedGarments: garments.map((garment) => ({
+      category: normalizeText(garment.category),
+      subcategory: normalizeText(garment.subcategory),
+      primaryColor: normalizeText(garment.primaryColor),
       materialCandidates: normalizeList(
-        input.selectedGarment.materialCandidates,
+        garment.materialCandidates,
       ),
-      styleTags: normalizeList(input.selectedGarment.styleTags),
-      formality: normalizeText(input.selectedGarment.formality),
-    },
+      styleTags: normalizeList(garment.styleTags),
+      formality: normalizeText(garment.formality),
+    })),
     queries: normalizeList(input.queries),
     options: {
       occasion: normalizeText(input.options.occasion),

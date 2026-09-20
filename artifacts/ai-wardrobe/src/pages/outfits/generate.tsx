@@ -12,6 +12,7 @@ import {
   Sparkles,
   Star,
   WandSparkles,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
@@ -25,6 +26,7 @@ import { DataStatus } from "@/components/DataStatus";
 import { customFetch } from "@workspace/api-client-react";
 import {
   formalities,
+  completeOutfitRecommendationsSchema,
   occasionValues,
   styleDirections,
   styleItemRecommendationsSchema,
@@ -146,12 +148,16 @@ export default function GenerateOutfit() {
   const [formality, setFormality] = useState("");
   const [useInspiration, setUseInspiration] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [anchorIds, setAnchorIds] = useState<string[]>([]);
 
   const top = TOPS[topIndex % TOPS.length];
   const bottom = BOTTOMS[bottomIndex % BOTTOMS.length];
   const extra = EXTRAS[activeExtra % EXTRAS.length];
   const recommendation =
     recommendations[recommendationIndex % recommendations.length];
+  const selectedAnchors = anchorIds.flatMap((id) =>
+    items.filter((item) => item.id === id),
+  );
   useEffect(() => {
     setSaved(false);
     setHasVerdict(false);
@@ -253,6 +259,52 @@ export default function GenerateOutfit() {
         error instanceof Error
           ? error.message
           : "Could not create recommendations",
+      );
+    } finally {
+      setIsScanning(false);
+    }
+  };
+  const toggleAnchor = (id: string) => {
+    setRecommendationError(null);
+    setAnchorIds((current) => {
+      if (current.includes(id)) return current.filter((value) => value !== id);
+      if (current.length === 3) {
+        setRecommendationError("Complete My Outfit supports up to three selected pieces.");
+        return current;
+      }
+      return [...current, id];
+    });
+  };
+  const completeOutfit = async () => {
+    if (anchorIds.length < 2) {
+      setRecommendationError("Select two or three anchor pieces first.");
+      return;
+    }
+    setIsScanning(true);
+    setRecommendationError(null);
+    setSaved(false);
+    setHasVerdict(false);
+    try {
+      const result = completeOutfitRecommendationsSchema.parse(
+        await customFetch("/api/outfits/complete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            anchorItemIds: anchorIds,
+            ...(occasion ? { occasion } : {}),
+            ...(style ? { style } : {}),
+            ...(formality ? { formality } : {}),
+            useInspiration,
+          }),
+        }),
+      );
+      setRecommendations(result.outfits);
+      setRecommendationIndex(0);
+      setSourcesOpen(false);
+    } catch (error) {
+      setRecommendations([]);
+      setRecommendationError(
+        error instanceof Error ? error.message : "Could not complete this outfit",
       );
     } finally {
       setIsScanning(false);
@@ -402,6 +454,34 @@ export default function GenerateOutfit() {
                   </dd>
                 </div>
               </dl>
+              <div className="space-y-2">
+                <span className="panel-kicker">Complete My Outfit anchors</span>
+                {selectedAnchors.length ? (
+                  <div className="flex flex-wrap gap-2">
+                    {selectedAnchors.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="tiny-retro-button"
+                        onClick={() => toggleAnchor(item.id)}
+                        aria-label={`Remove ${item.name} from selected anchors`}
+                      >
+                        {item.name} <X aria-hidden="true" />
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="keyboard-tip">Select two or three pieces you want to keep.</p>
+                )}
+                <button
+                  className="tiny-retro-button"
+                  type="button"
+                  disabled={anchorIds.includes(top.id)}
+                  onClick={() => toggleAnchor(top.id)}
+                >
+                  {anchorIds.includes(top.id) ? "Current item selected" : "Add current item as anchor"}
+                </button>
+              </div>
               <button
                 className="tiny-retro-button"
                 type="button"
@@ -630,6 +710,16 @@ export default function GenerateOutfit() {
                 <WandSparkles />
               )}{" "}
               {isScanning ? "Styling..." : "Style this item"}
+            </button>
+            <button
+              type="button"
+              className="dress-button"
+              onClick={() => void completeOutfit()}
+              disabled={isScanning || anchorIds.length < 2}
+              title={anchorIds.length < 2 ? "Select at least two anchor pieces" : undefined}
+            >
+              {isScanning ? <Loader2 className="animate-spin" /> : <WandSparkles />} {" "}
+              Complete my outfit
             </button>
           </div>
 

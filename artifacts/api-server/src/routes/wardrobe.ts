@@ -59,6 +59,14 @@ export function wardrobeRouter(
       );
     res.json(await options.styleItemService.recommend(req.body));
   });
+  router.post("/outfits/complete", async (req, res) => {
+    if (!options.styleItemService)
+      throw new ClothingAnalysisError(
+        503,
+        "AI recommendations are not configured. Manual outfit building is still available.",
+      );
+    res.json(await options.styleItemService.complete(req.body));
+  });
   router.post("/outfits", async (req, res) => {
     res.status(201).json(await service.createOutfit(req.body));
   });

@@ -23,6 +23,7 @@ sourceIndexes lists the zero-based indexes of the provided references that actua
 
 export type StyleDirectionExtractionInput = {
   garment: InspirationQueryGarment;
+  garments?: readonly InspirationQueryGarment[];
   hits: readonly InspirationHit[];
   options: InspirationSearchOptions;
 };
@@ -271,15 +272,19 @@ export function reconcileStyleDirections(
 export function buildDirectionExtractionPayload(
   input: StyleDirectionExtractionInput,
 ) {
+  const compactGarment = (garment: InspirationQueryGarment) => ({
+    category: garment.category,
+    subcategory: garment.subcategory || null,
+    primaryColor: garment.primaryColor,
+    materialCandidates: garment.materialCandidates,
+    styleTags: garment.styleTags,
+    formality: garment.formality,
+  });
+  const selectedGarments = input.garments ?? [input.garment];
   return {
-    selectedGarment: {
-      category: input.garment.category,
-      subcategory: input.garment.subcategory || null,
-      primaryColor: input.garment.primaryColor,
-      materialCandidates: input.garment.materialCandidates,
-      styleTags: input.garment.styleTags,
-      formality: input.garment.formality,
-    },
+    ...(selectedGarments.length === 1
+      ? { selectedGarment: compactGarment(selectedGarments[0]!) }
+      : { selectedGarments: selectedGarments.map(compactGarment) }),
     request: {
       occasion: input.options.occasion ?? null,
       style: input.options.style ?? null,

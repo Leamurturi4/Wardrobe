@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  generateCombinedInspirationQueries,
   generateInspirationQueries,
   type InspirationQueryGarment,
 } from "../src/services/inspiration";
@@ -62,4 +63,20 @@ test("uses only bounded clothing fields and excludes obvious personal data", () 
     /jane|doe|tirana|private|example\.com|555|123|4567/i,
   );
   assert(queries.every((value) => value.length <= 80));
+});
+
+test("generates combined-anchor inspiration queries without IDs or images", () => {
+  const queries = generateCombinedInspirationQueries([
+    garment,
+    {
+      category: "Bottoms",
+      subcategory: "Jeans",
+      primaryColor: "Navy",
+      materialCandidates: ["Denim"],
+      styleTags: ["Classic"],
+      formality: "Casual",
+    },
+  ]);
+  assert.match(queries[0] ?? "", /ivory satin blouse navy denim jeans outfit/);
+  assert.doesNotMatch(queries.join(" "), /uploads|wardrobeItemId|\.jpg/i);
 });

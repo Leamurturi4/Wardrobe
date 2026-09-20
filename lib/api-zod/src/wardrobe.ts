@@ -618,6 +618,28 @@ export const styleItemRequestSchema = z
   })
   .strict();
 export type StyleItemRequest = z.output<typeof styleItemRequestSchema>;
+const recommendationOptionsShape = {
+  occasion: text.min(1).optional(),
+  style: text.min(1).optional(),
+  formality: formality.optional(),
+  useInspiration: z.boolean().optional(),
+};
+export const completeOutfitRequestSchema = z
+  .object({
+    anchorItemIds: z
+      .array(text.min(1))
+      .min(2)
+      .max(3)
+      .refine(
+        (ids) => new Set(ids).size === ids.length,
+        "Duplicate anchor wardrobe items",
+      ),
+    ...recommendationOptionsShape,
+  })
+  .strict();
+export type CompleteOutfitRequest = z.output<
+  typeof completeOutfitRequestSchema
+>;
 export const outfitRecommendationSchema = z
   .object({
     itemIds: z.array(text.min(1)).min(1).max(8),
@@ -639,6 +661,16 @@ export const styleItemRecommendationsSchema = z
 export type OutfitRecommendation = z.output<typeof outfitRecommendationSchema>;
 export type StyleItemRecommendations = z.output<
   typeof styleItemRecommendationsSchema
+>;
+export const completeOutfitRecommendationsSchema = z
+  .object({
+    anchorItemIds: z.array(text.min(1)).min(2).max(3),
+    outfits: z.array(outfitRecommendationSchema).min(1).max(5),
+    inspirationProvider: text.nullable().default(null),
+  })
+  .strict();
+export type CompleteOutfitRecommendations = z.output<
+  typeof completeOutfitRecommendationsSchema
 >;
 const queryBoolean = z.enum(["true", "false"]).transform((v) => v === "true");
 export const wardrobeFilterSchema = z

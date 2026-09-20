@@ -510,6 +510,81 @@ test("style-item endpoint returns wardrobe-only looks and saves an AI-assisted o
   );
 });
 
+test("complete-outfit endpoint retains anchors and saves through the existing outfit model", async () => {
+  const top = (
+    await request("/wardrobe", "POST", {
+      ...input,
+      name: "Completion blouse",
+      category: "Tops",
+      primaryColor: "Ivory",
+      originalImage: "/uploads/completion-top.jpg",
+    })
+  ).body;
+  const bottom = (
+    await request("/wardrobe", "POST", {
+      ...input,
+      name: "Completion jeans",
+      category: "Bottoms",
+      primaryColor: "Navy",
+      originalImage: "/uploads/completion-bottom.jpg",
+    })
+  ).body;
+  const shoes = (
+    await request("/wardrobe", "POST", {
+      ...input,
+      name: "Completion shoes",
+      category: "Shoes",
+      primaryColor: "Black",
+      originalImage: "/uploads/completion-shoes.jpg",
+    })
+  ).body;
+  recommendationResult = {
+    outfits: [
+      {
+        itemIds: [top.id, bottom.id, shoes.id],
+        title: "Completed work look",
+        explanation: "The black shoes finish the ivory and navy anchors.",
+        styleTags: ["Minimalist"],
+        occasionFit: "Work",
+      },
+    ],
+  };
+  assert.equal(
+    (
+      await request("/outfits/complete", "POST", {
+        anchorItemIds: [top.id, top.id],
+      })
+    ).status,
+    400,
+  );
+  const completed = await request("/outfits/complete", "POST", {
+    anchorItemIds: [top.id, bottom.id],
+    occasion: "Work",
+  });
+  assert.equal(completed.status, 200);
+  assert.deepEqual(completed.body.anchorItemIds, [top.id, bottom.id]);
+  assert(
+    [top.id, bottom.id].every((id) =>
+      completed.body.outfits[0].itemIds.includes(id),
+    ),
+  );
+  const look = completed.body.outfits[0];
+  const saved = await request("/outfits", "POST", {
+    name: look.title,
+    source: "ai-assisted",
+    items: look.itemIds.map((itemId: string) => ({ itemId })),
+    styleTags: look.styleTags,
+    occasion: look.occasionFit,
+    recommendationExplanation: look.explanation,
+  });
+  assert.equal(saved.status, 201);
+  assert.equal(saved.body.source, "ai-assisted");
+  assert.deepEqual(
+    saved.body.items.map((member: { itemId: string }) => member.itemId),
+    [top.id, bottom.id, shoes.id],
+  );
+});
+
 test("inspired recommendations expose sources and still save unchanged", async () => {
   const selected = (
     await request("/wardrobe", "POST", {

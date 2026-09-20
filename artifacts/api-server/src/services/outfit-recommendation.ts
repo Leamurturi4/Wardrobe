@@ -1,5 +1,7 @@
 import {
   categories,
+  completeOutfitRecommendationsSchema,
+  completeOutfitRequestSchema,
   inspirationResultSchema,
   outfitRecommendationSchema,
   styleItemRecommendationsSchema,
@@ -8,6 +10,8 @@ import {
   wardrobeItemSchema,
   z,
   type OutfitRecommendation,
+  type CompleteOutfitRecommendations,
+  type CompleteOutfitRequest,
   type InspirationResult,
   type StyleDirection,
   type StyleItemRequest,
@@ -37,8 +41,11 @@ type OutfitDraft = {
   directionName?: string | null | undefined;
 };
 export type OutfitReasoningContext = {
-  request: StyleItemRequest;
+  request: StyleItemRequest | CompleteOutfitRequest;
   selectedItem: WardrobeItem;
+  anchorItems?: WardrobeItem[];
+  requiredCategories?: WardrobeItem["category"][];
+  optionalCategories?: WardrobeItem["category"][];
   candidatePool: WardrobeItem[];
   styleProfile: StyleProfile;
   inspiration?: InspirationResult;
@@ -128,7 +135,7 @@ const categoryCompatible = (
 };
 const requestedFormalityCompatible = (
   item: WardrobeItem,
-  request: StyleItemRequest,
+  request: StyleItemRequest | CompleteOutfitRequest,
 ) => {
   if (!request.formality || !item.formality) return true;
   return (
@@ -141,7 +148,7 @@ const candidateScore = (
   selected: WardrobeItem,
   candidate: WardrobeItem,
   profile: StyleProfile,
-  request: StyleItemRequest,
+  request: StyleItemRequest | CompleteOutfitRequest,
 ) => {
   let score =
     colorsWork(selected, candidate) +
@@ -186,6 +193,45 @@ const candidateScore = (
   return score;
 };
 
+const silhouetteBalance = (anchors: readonly WardrobeItem[], candidate: WardrobeItem) => {
+  let score = 0;
+  for (const anchor of anchors) {
+    if (anchor.silhouette && candidate.silhouette) {
+      score += anchor.silhouette === candidate.silhouette ? 1 : 2;
+    }
+    if (anchor.structureLevel && candidate.structureLevel) {
+      score += anchor.structureLevel === candidate.structureLevel ? 2 : 1;
+    }
+    if (anchor.visualWeight && candidate.visualWeight) {
+      score += anchor.visualWeight === candidate.visualWeight ? 1 : 2;
+    }
+  }
+  return score;
+};
+
+export type OutfitNeeds = {
+  required: WardrobeItem["category"][];
+  optional: WardrobeItem["category"][];
+};
+
+/** Required structure plus useful finishing categories; optional pieces are never forced. */
+export function inferOutfitNeeds(
+  anchors: readonly Pick<WardrobeItem, "category">[],
+): OutfitNeeds {
+  const present = new Set(anchors.map((item) => item.category));
+  const required: WardrobeItem["category"][] = [];
+  if (present.has("Dresses")) {
+    if (!present.has("Shoes")) required.push("Shoes");
+  } else {
+    if (!present.has("Tops")) required.push("Tops");
+    if (!present.has("Bottoms")) required.push("Bottoms");
+    if (!present.has("Shoes")) required.push("Shoes");
+  }
+  const optional = (["Outerwear", "Bags", "Accessories", "Jewelry"] as const)
+    .filter((category) => !present.has(category));
+  return { required, optional };
+}
+
 /**
  * Deterministic candidate filtering. When style directions are supplied, items
  * that express those directions are pulled forward, so an inspired look is
@@ -198,24 +244,40 @@ export function buildCandidatePool(
   request: StyleItemRequest,
   directions: readonly StyleDirection[] = [],
 ): WardrobeItem[] {
+  return buildMultiAnchorCandidatePool([selected], items, profile, request, directions);
+}
+
+export function buildMultiAnchorCandidatePool(
+  anchors: readonly WardrobeItem[],
+  items: WardrobeItem[],
+  profile: StyleProfile,
+  request: StyleItemRequest | CompleteOutfitRequest,
+  directions: readonly StyleDirection[] = [],
+): WardrobeItem[] {
+  const anchorIds = new Set(anchors.map((item) => item.id));
   const eligible = items.filter(
     (item) =>
-      item.id !== selected.id &&
+      !anchorIds.has(item.id) &&
       item.status === "active" &&
       item.availability === "available" &&
       item.maintenanceState === "clean" &&
-      categoryCompatible(selected, item) &&
-      hasSeasonOverlap(selected, item) &&
+      anchors.every((anchor) => categoryCompatible(anchor, item)) &&
+      anchors.every((anchor) => hasSeasonOverlap(anchor, item)) &&
       requestedFormalityCompatible(item, request),
   );
+  const anchorScore = (item: WardrobeItem) =>
+    anchors.reduce(
+      (score, anchor) => score + candidateScore(anchor, item, profile, request),
+      0,
+    ) + silhouetteBalance(anchors, item);
   const affinity = (item: WardrobeItem) =>
     directions.length ? Math.min(directionAffinity(directions, item), 12) : 0;
   const byCategory = new Map<WardrobeItem["category"], WardrobeItem[]>();
   for (const item of eligible.sort(
     (a, b) =>
-      candidateScore(selected, b, profile, request) +
+      anchorScore(b) +
         affinity(b) -
-        (candidateScore(selected, a, profile, request) + affinity(a)) ||
+        (anchorScore(a) + affinity(a)) ||
       a.id.localeCompare(b.id),
   )) {
     const values = byCategory.get(item.category) ?? [];
@@ -224,7 +286,15 @@ export function buildCandidatePool(
       byCategory.set(item.category, values);
     }
   }
-  const pool = categories
+  const needs = inferOutfitNeeds(anchors);
+  const categoryOrder = [
+    ...needs.required,
+    ...needs.optional,
+    ...categories.filter(
+      (category) => !needs.required.includes(category) && !needs.optional.includes(category),
+    ),
+  ];
+  const pool = categoryOrder
     .flatMap((category) => byCategory.get(category) ?? [])
     .slice(0, 28);
   if (!directions.length) return pool;
@@ -249,25 +319,19 @@ export function missingCategories(
   selectedCategory: WardrobeItem["category"],
   items: WardrobeItem[],
 ): WardrobeItem["category"][] {
+  void selectedCategory;
   const present = new Set(items.map((item) => item.category));
-  if (selectedCategory === "Dresses")
-    return present.has("Shoes") ? [] : ["Shoes"];
-  if (
-    selectedCategory === "Shoes" ||
-    ["Bags", "Accessories", "Jewelry"].includes(selectedCategory)
-  ) {
-    if (present.has("Dresses")) return present.has("Shoes") ? [] : ["Shoes"];
-    return (["Tops", "Bottoms", "Shoes"] as const).filter(
-      (category) => !present.has(category),
-    );
-  }
-  const required =
-    selectedCategory === "Outerwear"
-      ? (["Tops", "Bottoms", "Shoes"] as const)
-      : selectedCategory === "Tops"
-        ? (["Bottoms", "Shoes"] as const)
-        : (["Tops", "Shoes"] as const);
+  if (present.has("Dresses")) return present.has("Shoes") ? [] : ["Shoes"];
+  const required = ["Tops", "Bottoms", "Shoes"] as const;
   return required.filter((category) => !present.has(category));
+}
+
+export function missingCategoriesForAnchors(
+  anchors: readonly WardrobeItem[],
+  items: readonly WardrobeItem[],
+): WardrobeItem["category"][] {
+  const present = new Set(items.map((item) => item.category));
+  return inferOutfitNeeds(anchors).required.filter((category) => !present.has(category));
 }
 
 const compactItem = (item: WardrobeItem) => ({
@@ -299,10 +363,14 @@ export function createGeminiOutfitReasoner(
 ): OutfitReasoner {
   return {
     async recommend(context) {
-      const { useInspiration: _useInspiration, ...stylingRequest } =
-        context.request;
+      const anchors = context.anchorItems ?? [context.selectedItem];
+      const stylingRequest = {
+        occasion: context.request.occasion ?? null,
+        style: context.request.style ?? null,
+        formality: context.request.formality ?? null,
+      };
       const allowedIds = [
-        context.selectedItem.id,
+        ...anchors.map((item) => item.id),
         ...context.candidatePool.map((item) => item.id),
       ];
       const directionNames =
@@ -357,9 +425,13 @@ export function createGeminiOutfitReasoner(
         required: ["outfits"],
       };
       const payload = {
-        mode: "style-this-item",
+        mode: anchors.length === 1 ? "style-this-item" : "complete-my-outfit",
         request: stylingRequest,
-        selectedItem: compactItem(context.selectedItem),
+        anchorItems: anchors.map(compactItem),
+        missingCategories: context.requiredCategories ??
+          inferOutfitNeeds(anchors).required,
+        optionalCategories: context.optionalCategories ??
+          inferOutfitNeeds(anchors).optional,
         candidatePool: context.candidatePool.map(compactItem),
         styleDNA: {
           aestheticTags: context.styleProfile.aestheticTags,
@@ -386,9 +458,9 @@ export function createGeminiOutfitReasoner(
             }
           : {}),
       };
-      const prompt = `Build 3-4 distinct outfits around the selected wardrobe item using only IDs from the candidate pool below.
-The selectedItem.id must appear in every outfit. Never invent or alter an ID. Prefer complete category structures, but return the best partial look when inventory is insufficient.
-Use proportions, color harmony, formality, structure, texture, style direction, and Style DNA. Explanations must name concrete styling logic, not generic praise.${context.inspiration ? "\nUse the provided inspiration only as creative direction; it cannot supply wardrobe items or IDs. inspiration.directions are ordered strongest-first, and ownedMatches lists the candidate IDs that already express each direction: adapt the idea to what is owned instead of demanding an exact match, and set directionName to the direction an outfit follows (null when it follows none)." : ""}
+      const prompt = `Build 3-4 distinct outfits around every anchor item using only IDs from the anchors and candidate pool below.
+  Every anchorItems.id must appear in every outfit. Never invent or alter an ID. Fill required missing categories first. Optional categories can improve a look but must not be forced. Return the best partial look when inventory is insufficient.
+  Use proportions, color harmony, silhouette balance, formality, structure, texture, occasion, season, style direction, and Style DNA. Explanations must name concrete styling logic, not generic praise.${context.inspiration ? "\nUse the provided inspiration only as creative direction; it cannot supply wardrobe items or IDs. inspiration.directions are ordered strongest-first, and ownedMatches lists the candidate IDs that already express each direction: adapt the idea to what is owned instead of demanding an exact match, and set directionName to the direction an outfit follows (null when it follows none)." : ""}
 Do not recommend products, shopping, weather, trends, or online inspiration.\n\n${JSON.stringify(payload)}`;
       return client.generateJson({
         prompt,
@@ -402,16 +474,29 @@ Do not recommend products, shopping, weather, trends, or online inspiration.\n\n
 function rankingScore(
   candidate: OutfitRecommendation,
   items: WardrobeItem[],
-  selected: WardrobeItem,
+  anchors: readonly WardrobeItem[],
   profile: StyleProfile,
-  request: StyleItemRequest,
+  request: StyleItemRequest | CompleteOutfitRequest,
+  directions: readonly StyleDirection[] = [],
 ) {
-  const completeness = categories.length - candidate.missingCategories.length;
   const members = items.filter((item) => candidate.itemIds.includes(item.id));
+  const needs = inferOutfitNeeds(anchors);
+  const present = new Set(members.map((item) => item.category));
+  const completeness = needs.required.filter((category) => present.has(category)).length;
+  const optionalCoverage = needs.optional.filter((category) => present.has(category)).length;
   return (
-    completeness * 20 +
+    completeness * 25 +
+    optionalCoverage * 3 +
     members.reduce(
-      (sum, item) => sum + candidateScore(selected, item, profile, request),
+      (sum, item) =>
+        sum +
+        anchors.reduce(
+          (anchorScore, anchor) =>
+            anchorScore + candidateScore(anchor, item, profile, request),
+          0,
+        ) +
+        silhouetteBalance(anchors, item) +
+        Math.min(directionAffinity(directions, item), 8),
       0,
     ) +
     overlap(candidate.styleTags, [
@@ -422,189 +507,265 @@ function rankingScore(
   );
 }
 
+function coherentOutfit(
+  members: readonly WardrobeItem[],
+  anchorIds: ReadonlySet<string>,
+): boolean {
+  for (const category of ["Bottoms", "Dresses", "Shoes", "Bags", "Outerwear"] as const) {
+    const inCategory = members.filter((item) => item.category === category);
+    if (inCategory.length > 1 && inCategory.some((item) => !anchorIds.has(item.id)))
+      return false;
+  }
+  const hasDress = members.some((item) => item.category === "Dresses");
+  if (hasDress) {
+    const conflicting = members.filter((item) =>
+      item.category === "Tops" || item.category === "Bottoms");
+    if (conflicting.some((item) => !anchorIds.has(item.id))) return false;
+  }
+  return true;
+}
+
 export function createStyleItemService(
   wardrobe: WardrobeService,
   reasoner: OutfitReasoner,
   inspirationSource: InspirationSource = noOpInspirationSource,
 ) {
-  return {
-    async recommend(input: unknown): Promise<StyleItemRecommendations> {
-      const request = styleItemRequestSchema.parse(input);
-      let selected: WardrobeItem;
+  async function recommendForAnchors(
+    request: StyleItemRequest | CompleteOutfitRequest,
+    anchorIds: string[],
+    mode: "style-item" | "complete-outfit",
+  ): Promise<StyleItemRecommendations | CompleteOutfitRecommendations> {
+    const anchors: WardrobeItem[] = [];
+    for (const id of anchorIds) {
+      let anchor: WardrobeItem;
       try {
-        selected = wardrobeItemSchema.parse(
-          await wardrobe.getItem(request.wardrobeItemId),
-        );
+        anchor = wardrobeItemSchema.parse(await wardrobe.getItem(id));
       } catch (error) {
         if (error instanceof DomainError) throw error;
-        throw new DomainError(404, "Selected wardrobe item not found");
+        throw new DomainError(404, "Anchor wardrobe item not found");
       }
       if (
-        selected.status !== "active" ||
-        selected.availability !== "available" ||
-        selected.maintenanceState !== "clean"
+        anchor.status !== "active" ||
+        anchor.availability !== "available" ||
+        anchor.maintenanceState !== "clean"
       ) {
         throw new DomainError(
           422,
-          "Selected wardrobe item is not currently available to wear",
+          "Every anchor item must be active, available, and ready to wear",
         );
       }
-      const items = z
-        .array(wardrobeItemSchema)
-        .parse(await wardrobe.listItems({ status: "active" }));
-      const profile = styleProfileSchema.parse(await wardrobe.getProfile());
-      let pool = buildCandidatePool(selected, items, profile, request);
-      if (!pool.length) {
+      anchors.push(anchor);
+    }
+    const items = z
+      .array(wardrobeItemSchema)
+      .parse(await wardrobe.listItems({ status: "active" }));
+    const profile = styleProfileSchema.parse(await wardrobe.getProfile());
+    const needs = inferOutfitNeeds(anchors);
+    let pool = buildMultiAnchorCandidatePool(
+      anchors,
+      items,
+      profile,
+      request,
+    );
+    const partialResult = () => ({
+      itemIds: anchors.map((item) => item.id),
+      title:
+        mode === "style-item"
+          ? `Style ${anchors[0]!.name}`
+          : `Complete ${anchors.map((item) => item.name).join(" + ")}`,
+      explanation:
+        "No other compatible, available wardrobe pieces were found, so this is the best partial look from current inventory.",
+      styleTags: [...new Set(anchors.flatMap((item) => item.styleTags))],
+      occasionFit: request.occasion ?? null,
+      missingCategories: missingCategoriesForAnchors(anchors, anchors),
+    });
+    if (!pool.length) {
+      if (mode === "style-item") {
         return styleItemRecommendationsSchema.parse({
-          selectedItemId: selected.id,
-          outfits: [
-            {
-              itemIds: [selected.id],
-              title: `Style ${selected.name}`,
-              explanation:
-                "No other compatible, available wardrobe pieces were found, so this is the best partial look from current inventory.",
-              styleTags: selected.styleTags,
-              occasionFit: request.occasion ?? null,
-              missingCategories: missingCategories(selected.category, [
-                selected,
-              ]),
-            },
-          ],
+          selectedItemId: anchors[0]!.id,
+          outfits: [partialResult()],
         });
       }
-      let inspiration: InspirationResult | undefined;
-      if (request.useInspiration === true) {
-        let providerOutput: unknown;
-        let providerSucceeded = false;
-        try {
-          providerOutput = await inspirationSource.search(selected, {
-            occasion: request.occasion,
-            style: request.style,
-            formality: request.formality,
-          });
-          providerSucceeded = true;
-        } catch {
-          // External inspiration is optional; provider outages fall back to wardrobe-only styling.
-        }
-        if (providerSucceeded) {
-          try {
-            const result = inspirationResultSchema.parse(providerOutput);
-            if (result.directions.length) inspiration = result;
-          } catch {
-            throw new ClothingAnalysisError(
-              502,
-              "Inspiration source returned invalid data. Wardrobe-only styling is still available.",
-            );
-          }
-        }
-      }
-      // Style directions bias the deterministic pool, then map onto the owned
-      // candidates that actually survived filtering.
-      let directionMatches: DirectionMatch[] = [];
-      if (inspiration) {
-        pool = buildCandidatePool(
-          selected,
-          items,
-          profile,
-          request,
-          inspiration.directions,
-        );
-        directionMatches = mapDirectionsToWardrobe(
-          inspiration.directions,
-          pool,
-        );
-      }
-      let drafts: OutfitDraft[];
+      return completeOutfitRecommendationsSchema.parse({
+        anchorItemIds: anchorIds,
+        outfits: [partialResult()],
+      });
+    }
+    let inspiration: InspirationResult | undefined;
+    if (request.useInspiration === true) {
+      let providerOutput: unknown;
+      let providerSucceeded = false;
       try {
-        drafts = draftsSchema.parse(
-          await reasoner.recommend({
-            request,
-            selectedItem: selected,
-            candidatePool: pool,
-            styleProfile: profile,
-            ...(inspiration ? { inspiration, directionMatches } : {}),
-          }),
-        ).outfits;
-      } catch (error) {
-        if (error instanceof ClothingAnalysisError) throw error;
-        throw new ClothingAnalysisError(
-          502,
-          "AI returned invalid outfit recommendations. Manual outfit building is still available.",
-        );
+        providerOutput =
+          anchors.length > 1 && inspirationSource.searchAnchors
+            ? await inspirationSource.searchAnchors(anchors, request)
+            : await inspirationSource.search(anchors[0]!, request);
+        providerSucceeded = true;
+      } catch {
+        // External inspiration is optional; provider outages fall back to wardrobe-only styling.
       }
-      const allowed = new Map(
-        [selected, ...pool].map((item) => [item.id, item]),
-      );
-      const directionsByName = new Map(
-        (inspiration?.directions ?? []).map((direction) => [
-          direction.name,
-          direction,
-        ]),
-      );
-      const recommendations = drafts.map((draft) => {
-        if (
-          new Set(draft.itemIds).size !== draft.itemIds.length ||
-          !draft.itemIds.includes(selected.id) ||
-          draft.itemIds.some((id) => !allowed.has(id))
-        )
+      if (providerSucceeded) {
+        const result = inspirationResultSchema.safeParse(providerOutput);
+        if (result.success && result.data.directions.length)
+          inspiration = result.data;
+        else if (!result.success && mode === "style-item")
           throw new ClothingAnalysisError(
             502,
-            "AI returned an invalid wardrobe item reference. Manual outfit building is still available.",
+            "Inspiration source returned invalid data. Wardrobe-only styling is still available.",
           );
-        const members = draft.itemIds.map((id) => allowed.get(id)!);
-        const { directionName, ...outfit } = draft;
-        // Provenance comes from the direction itself, never from the model, so
-        // an outfit can only cite sources that actually informed its direction.
-        const direction = directionName
-          ? directionsByName.get(directionName)
-          : undefined;
-        return outfitRecommendationSchema.parse({
-          ...outfit,
-          missingCategories: missingCategories(selected.category, members),
-          inspiration: direction
-            ? {
-                directionName: direction.name,
-                summary: direction.reasoning,
-                sources: direction.sourceReferences.slice(0, 6),
-              }
-            : null,
-        });
-      });
-      const deduplicated = [
-        ...new Map(
-          recommendations.map((candidate) => [
-            [...candidate.itemIds].sort().join("|"),
-            candidate,
-          ]),
-        ).values(),
-      ];
-      const ranked: OutfitRecommendation[] = [];
-      while (deduplicated.length) {
-        deduplicated.sort((a, b) => {
-          const redundancy = (candidate: OutfitRecommendation) =>
-            Math.max(
-              0,
-              ...ranked.map((existing) =>
-                overlap(
-                  candidate.itemIds.filter((id) => id !== selected.id),
-                  existing.itemIds.filter((id) => id !== selected.id),
-                ),
-              ),
-            );
-          return (
-            rankingScore(b, items, selected, profile, request) -
-            redundancy(b) * 3 -
-            (rankingScore(a, items, selected, profile, request) -
-              redundancy(a) * 3)
-          );
-        });
-        ranked.push(deduplicated.shift()!);
       }
-      return styleItemRecommendationsSchema.parse({
-        selectedItemId: selected.id,
-        outfits: ranked.slice(0, 4),
-        inspirationProvider: inspiration?.provider ?? null,
+    }
+    let directionMatches: DirectionMatch[] = [];
+    if (inspiration) {
+      pool = buildMultiAnchorCandidatePool(
+        anchors,
+        items,
+        profile,
+        request,
+        inspiration.directions,
+      );
+      directionMatches = mapDirectionsToWardrobe(
+        inspiration.directions,
+        pool,
+      );
+    }
+    let drafts: OutfitDraft[];
+    try {
+      drafts = draftsSchema.parse(
+        await reasoner.recommend({
+          request,
+          selectedItem: anchors[0]!,
+          anchorItems: anchors,
+          requiredCategories: needs.required,
+          optionalCategories: needs.optional,
+          candidatePool: pool,
+          styleProfile: profile,
+          ...(inspiration ? { inspiration, directionMatches } : {}),
+        }),
+      ).outfits;
+    } catch (error) {
+      if (error instanceof ClothingAnalysisError) throw error;
+      throw new ClothingAnalysisError(
+        502,
+        "AI returned invalid outfit recommendations. Manual outfit building is still available.",
+      );
+    }
+    const allowed = new Map(
+      [...anchors, ...pool].map((item) => [item.id, item]),
+    );
+    const anchorIdSet = new Set(anchorIds);
+    const directionsByName = new Map(
+      (inspiration?.directions ?? []).map((direction) => [
+        direction.name,
+        direction,
+      ]),
+    );
+    const recommendations = drafts.map((draft) => {
+      if (
+        new Set(draft.itemIds).size !== draft.itemIds.length ||
+        anchorIds.some((id) => !draft.itemIds.includes(id)) ||
+        draft.itemIds.some((id) => !allowed.has(id))
+      )
+        throw new ClothingAnalysisError(
+          502,
+          "AI returned an invalid wardrobe item reference. Manual outfit building is still available.",
+        );
+      const members = draft.itemIds.map((id) => allowed.get(id)!);
+      if (!coherentOutfit(members, anchorIdSet))
+        throw new ClothingAnalysisError(
+          502,
+          "AI returned an incoherent outfit structure. Manual outfit building is still available.",
+        );
+      const { directionName, ...outfit } = draft;
+      const direction = directionName
+        ? directionsByName.get(directionName)
+        : undefined;
+      return outfitRecommendationSchema.parse({
+        ...outfit,
+        missingCategories: missingCategoriesForAnchors(anchors, members),
+        inspiration: direction
+          ? {
+              directionName: direction.name,
+              summary: direction.reasoning,
+              sources: direction.sourceReferences.slice(0, 6),
+            }
+          : null,
       });
+    });
+    const deduplicated = [
+      ...new Map(
+        recommendations.map((candidate) => [
+          [...candidate.itemIds].sort().join("|"),
+          candidate,
+        ]),
+      ).values(),
+    ];
+    const ranked: OutfitRecommendation[] = [];
+    while (deduplicated.length) {
+      deduplicated.sort((a, b) => {
+        const redundancy = (candidate: OutfitRecommendation) =>
+          Math.max(
+            0,
+            ...ranked.map((existing) =>
+              overlap(
+                candidate.itemIds.filter((id) => !anchorIdSet.has(id)),
+                existing.itemIds.filter((id) => !anchorIdSet.has(id)),
+              ),
+            ),
+          );
+        return (
+          rankingScore(
+            b,
+            items,
+            anchors,
+            profile,
+            request,
+            inspiration?.directions,
+          ) -
+          redundancy(b) * 3 -
+          (rankingScore(
+            a,
+            items,
+            anchors,
+            profile,
+            request,
+            inspiration?.directions,
+          ) -
+            redundancy(a) * 3)
+        );
+      });
+      ranked.push(deduplicated.shift()!);
+    }
+    const result = {
+      outfits: ranked.slice(0, 4),
+      inspirationProvider: inspiration?.provider ?? null,
+    };
+    return mode === "style-item"
+      ? styleItemRecommendationsSchema.parse({
+          ...result,
+          selectedItemId: anchors[0]!.id,
+        })
+      : completeOutfitRecommendationsSchema.parse({
+          ...result,
+          anchorItemIds: anchorIds,
+        });
+  }
+  return {
+    async recommend(input: unknown): Promise<StyleItemRecommendations> {
+      const request = styleItemRequestSchema.parse(input);
+      return (await recommendForAnchors(
+        request,
+        [request.wardrobeItemId],
+        "style-item",
+      )) as StyleItemRecommendations;
+    },
+    async complete(input: unknown): Promise<CompleteOutfitRecommendations> {
+      const request = completeOutfitRequestSchema.parse(input);
+      return (await recommendForAnchors(
+        request,
+        request.anchorItemIds,
+        "complete-outfit",
+      )) as CompleteOutfitRecommendations;
     },
   };
 }
