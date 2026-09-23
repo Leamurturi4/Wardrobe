@@ -40,6 +40,22 @@ export function parseCompleteOutfitResponse(
   return completeOutfitRecommendationsSchema.parse(input);
 }
 
+export function buildRecommendationPieces<T extends Pick<WardrobeItem, "id">>(
+  recommendation: OutfitRecommendation,
+  items: readonly T[],
+  anchorItemIds: readonly string[],
+) {
+  const anchorIds = new Set(anchorItemIds);
+  const itemById = new Map(items.map((item) => [item.id, item]));
+  return {
+    pieces: recommendation.itemIds.flatMap((id) => {
+      const item = itemById.get(id);
+      return item ? [{ item, isAnchor: anchorIds.has(id) }] : [];
+    }),
+    unresolvedItemIds: recommendation.itemIds.filter((id) => !itemById.has(id)),
+  };
+}
+
 export function buildGeneratedOutfitSaveBody(
   recommendation: OutfitRecommendation,
   items: readonly Pick<WardrobeItem, "id" | "category">[],

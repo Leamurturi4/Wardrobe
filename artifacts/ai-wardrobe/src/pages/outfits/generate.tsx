@@ -34,6 +34,7 @@ import {
 import {
   buildCompleteOutfitRequest,
   buildGeneratedOutfitSaveBody,
+  buildRecommendationPieces,
   parseCompleteOutfitResponse,
   toggleAnchorId,
 } from "./complete-outfit-state";
@@ -154,12 +155,16 @@ export default function GenerateOutfit() {
   const [useInspiration, setUseInspiration] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [anchorIds, setAnchorIds] = useState<string[]>([]);
+  const [resultAnchorIds, setResultAnchorIds] = useState<string[]>([]);
 
   const top = TOPS[topIndex % TOPS.length];
   const bottom = BOTTOMS[bottomIndex % BOTTOMS.length];
   const extra = EXTRAS[activeExtra % EXTRAS.length];
   const recommendation =
     recommendations[recommendationIndex % recommendations.length];
+  const recommendationView = recommendation
+    ? buildRecommendationPieces(recommendation, items, resultAnchorIds)
+    : null;
   const selectedAnchors = anchorIds.flatMap((id) =>
     items.filter((item) => item.id === id),
   );
@@ -167,6 +172,7 @@ export default function GenerateOutfit() {
     setSaved(false);
     setHasVerdict(false);
     setRecommendations([]);
+    setResultAnchorIds([]);
     setRecommendationError(null);
   }, [top?.id]);
   useEffect(() => {
@@ -179,11 +185,7 @@ export default function GenerateOutfit() {
         {
           path: "outfits",
           method: "POST",
-          body: buildGeneratedOutfitSaveBody(
-            recommendation,
-            items,
-            occasion,
-          ),
+          body: buildGeneratedOutfitSaveBody(recommendation, items, occasion),
         },
         { onSuccess: () => setSaved(true) },
       );
@@ -224,6 +226,7 @@ export default function GenerateOutfit() {
 
   const reviewManual = () => {
     setRecommendations([]);
+    setResultAnchorIds([]);
     setRecommendationError(null);
     setHasVerdict(true);
   };
@@ -247,10 +250,13 @@ export default function GenerateOutfit() {
         }),
       );
       setRecommendations(result.outfits);
+      setResultAnchorIds([top.id]);
       setRecommendationIndex(0);
+      setHasVerdict(true);
       setSourcesOpen(false);
     } catch (error) {
       setRecommendations([]);
+      setResultAnchorIds([]);
       setRecommendationError(
         error instanceof Error
           ? error.message
@@ -297,12 +303,17 @@ export default function GenerateOutfit() {
         }),
       );
       setRecommendations(result.outfits);
+      setResultAnchorIds(result.anchorItemIds);
       setRecommendationIndex(0);
+      setHasVerdict(true);
       setSourcesOpen(false);
     } catch (error) {
       setRecommendations([]);
+      setResultAnchorIds([]);
       setRecommendationError(
-        error instanceof Error ? error.message : "Could not complete this outfit",
+        error instanceof Error
+          ? error.message
+          : "Could not complete this outfit",
       );
     } finally {
       setIsScanning(false);
@@ -318,8 +329,22 @@ export default function GenerateOutfit() {
         return;
       if (event.key === "ArrowUp") moveTop(-1);
       if (event.key === "ArrowDown") moveBottom(1);
-      if (event.key === "ArrowLeft") moveTop(-1);
-      if (event.key === "ArrowRight") moveBottom(1);
+      if (event.key === "ArrowLeft" && recommendations.length > 1) {
+        event.preventDefault();
+        setSaved(false);
+        setSourcesOpen(false);
+        setRecommendationIndex((value) =>
+          wrap(value - 1, recommendations.length),
+        );
+      } else if (event.key === "ArrowLeft") moveTop(-1);
+      if (event.key === "ArrowRight" && recommendations.length > 1) {
+        event.preventDefault();
+        setSaved(false);
+        setSourcesOpen(false);
+        setRecommendationIndex((value) =>
+          wrap(value + 1, recommendations.length),
+        );
+      } else if (event.key === "ArrowRight") moveBottom(1);
       if (event.key.toLowerCase() === "d") void styleThis();
     };
     window.addEventListener("keydown", onKeyDown);
@@ -469,7 +494,9 @@ export default function GenerateOutfit() {
                     ))}
                   </div>
                 ) : (
-                  <p className="keyboard-tip">Select two or three pieces you want to keep.</p>
+                  <p className="keyboard-tip">
+                    Select two or three pieces you want to keep.
+                  </p>
                 )}
                 <button
                   className="tiny-retro-button"
@@ -477,7 +504,9 @@ export default function GenerateOutfit() {
                   disabled={anchorIds.includes(top.id)}
                   onClick={() => toggleAnchor(top.id)}
                 >
-                  {anchorIds.includes(top.id) ? "Current item selected" : "Add current item as anchor"}
+                  {anchorIds.includes(top.id)
+                    ? "Current item selected"
+                    : "Add current item as anchor"}
                 </button>
               </div>
               <button
@@ -504,37 +533,82 @@ export default function GenerateOutfit() {
               </p>
             </aside>
 
-            <div className="outfit-machine">
-              <div className="machine-heading">
-                <span>Match station</span>
-                <strong>
-                  {String(topIndex + 1).padStart(2, "0")} /{" "}
-                  {String(TOPS.length).padStart(2, "0")}
-                </strong>
-              </div>
-              <PieceViewer
-                label="Selected item"
-                piece={top}
-                onPrevious={() => moveTop(-1)}
-                onNext={() => moveTop(1)}
-                isScanning={isScanning}
-              />
-              <div className="machine-seam">
-                <span>manual pair with</span>
-              </div>
-              {bottom ? (
-                <PieceViewer
-                  label="Bottoms"
-                  piece={bottom}
-                  onPrevious={() => moveBottom(-1)}
-                  onNext={() => moveBottom(1)}
-                  isScanning={isScanning}
-                />
+            <div
+              className={`outfit-machine ${recommendation ? "showing-result" : ""}`}
+            >
+              {recommendation && recommendationView ? (
+                <section
+                  className="completed-look"
+                  aria-label={`Generated outfit: ${recommendation.title}`}
+                >
+                  <div className="machine-heading">
+                    <span>Completed look</span>
+                    <strong>
+                      {String(recommendationIndex + 1).padStart(2, "0")} /{" "}
+                      {String(recommendations.length).padStart(2, "0")}
+                    </strong>
+                  </div>
+                  <div className="completed-look-grid">
+                    {recommendationView.pieces.map(({ item, isAnchor }) => (
+                      <article className="completed-piece" key={item.id}>
+                        <div className="completed-piece-image">
+                          <img src={item.imageUrl} alt={item.name} />
+                          <span
+                            className={
+                              isAnchor ? "anchor-badge" : "added-badge"
+                            }
+                          >
+                            {isAnchor ? "Selected anchor" : "AI added"}
+                          </span>
+                        </div>
+                        <div className="completed-piece-copy">
+                          <strong>{item.name}</strong>
+                          <span>{item.category}</span>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                  {recommendationView.unresolvedItemIds.length > 0 && (
+                    <p className="item-lookup-error" role="alert">
+                      Could not load wardrobe items:{" "}
+                      {recommendationView.unresolvedItemIds.join(", ")}
+                    </p>
+                  )}
+                </section>
               ) : (
-                <p>
-                  Add a bottom for manual pairing. Style This Item can still
-                  return a partial look.
-                </p>
+                <>
+                  <div className="machine-heading">
+                    <span>Match station</span>
+                    <strong>
+                      {String(topIndex + 1).padStart(2, "0")} /{" "}
+                      {String(TOPS.length).padStart(2, "0")}
+                    </strong>
+                  </div>
+                  <PieceViewer
+                    label="Selected item"
+                    piece={top}
+                    onPrevious={() => moveTop(-1)}
+                    onNext={() => moveTop(1)}
+                    isScanning={isScanning}
+                  />
+                  <div className="machine-seam">
+                    <span>manual pair with</span>
+                  </div>
+                  {bottom ? (
+                    <PieceViewer
+                      label="Bottoms"
+                      piece={bottom}
+                      onPrevious={() => moveBottom(-1)}
+                      onNext={() => moveBottom(1)}
+                      isScanning={isScanning}
+                    />
+                  ) : (
+                    <p>
+                      Add a bottom for manual pairing. Style This Item can still
+                      return a partial look.
+                    </p>
+                  )}
+                </>
               )}
             </div>
 
@@ -547,12 +621,15 @@ export default function GenerateOutfit() {
                 <>
                   <h2>{recommendation.title}</h2>
                   <p>{recommendation.explanation}</p>
-                  <p>
-                    {recommendation.itemIds
-                      .map((id) => items.find((item) => item.id === id)?.name)
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </p>
+                  <div className="recommendation-summary">
+                    <span>{resultAnchorIds.length} selected anchors</span>
+                    <span>
+                      {recommendationView?.pieces.filter(
+                        (piece) => !piece.isAnchor,
+                      ).length || 0}{" "}
+                      AI-added pieces
+                    </span>
+                  </div>
                   {recommendation.inspiration && (
                     <div className="inspired-note">
                       <span className="inspired-badge">
@@ -607,6 +684,7 @@ export default function GenerateOutfit() {
                       <button
                         type="button"
                         onClick={() => {
+                          setSaved(false);
                           setSourcesOpen(false);
                           setRecommendationIndex((value) =>
                             wrap(value - 1, recommendations.length),
@@ -622,6 +700,7 @@ export default function GenerateOutfit() {
                       <button
                         type="button"
                         onClick={() => {
+                          setSaved(false);
                           setSourcesOpen(false);
                           setRecommendationIndex((value) =>
                             wrap(value + 1, recommendations.length),
@@ -716,9 +795,17 @@ export default function GenerateOutfit() {
               className="dress-button"
               onClick={() => void completeOutfit()}
               disabled={isScanning || anchorIds.length < 2}
-              title={anchorIds.length < 2 ? "Select at least two anchor pieces" : undefined}
+              title={
+                anchorIds.length < 2
+                  ? "Select at least two anchor pieces"
+                  : undefined
+              }
             >
-              {isScanning ? <Loader2 className="animate-spin" /> : <WandSparkles />} {" "}
+              {isScanning ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <WandSparkles />
+              )}{" "}
               Complete my outfit
             </button>
           </div>
