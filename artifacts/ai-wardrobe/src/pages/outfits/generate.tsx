@@ -385,6 +385,7 @@ export default function GenerateOutfit() {
                   <button
                     type="button"
                     key={item.id}
+                    title={item.name}
                     className={`lab-wardrobe-card ${isSelected ? "selected" : ""} ${isFocused ? "focused" : ""}`}
                     aria-pressed={isSelected}
                     disabled={isGenerating}
@@ -666,7 +667,12 @@ export default function GenerateOutfit() {
               <section className="lab-result-details">
                 <span className="lab-eyebrow">Why this works</span>
                 <h3>{recommendation.title}</h3>
-                <p>{recommendation.explanation}</p>
+                <p
+                  className="lab-explanation"
+                  title={recommendation.explanation}
+                >
+                  {recommendation.explanation}
+                </p>
                 <div className="lab-result-meta">
                   <span>{resultAnchorIds.length} selected</span>
                   <span>
