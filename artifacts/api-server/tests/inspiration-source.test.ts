@@ -6,7 +6,7 @@ import {
   type StyleDirection,
   type WardrobeItem,
 } from "@workspace/api-zod";
-import type { GeminiStructuredClient } from "../src/services/clothing-analysis";
+import type { OpenAIStructuredClient } from "../src/services/openai-client";
 import { InspirationCache, TtlCache } from "../src/services/inspiration-cache";
 import type { StyleDirectionExtractor } from "../src/services/inspiration-directions";
 import {
@@ -262,7 +262,7 @@ test("provider failures, timeouts, empty results and extraction failures all deg
 
   const failingExtractor: StyleDirectionExtractor = {
     extract: async () => {
-      throw new Error("Gemini failed");
+      throw new Error("OpenAI failed");
     },
   };
   assert.deepEqual(
@@ -307,7 +307,7 @@ test("one failing query still yields directions from the queries that succeeded"
 });
 
 test("the configured source is null without credentials and real with them", () => {
-  const client: GeminiStructuredClient = {
+  const client: OpenAIStructuredClient = {
     generateJson: async () => ({ directions: [] }),
   };
   assert.equal(createConfiguredInspirationSource({}, client), null);

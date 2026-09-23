@@ -19,10 +19,8 @@ import {
   type StyleProfile,
   type WardrobeItem,
 } from "@workspace/api-zod";
-import {
-  ClothingAnalysisError,
-  type GeminiStructuredClient,
-} from "./clothing-analysis";
+import { ClothingAnalysisError } from "./clothing-analysis";
+import type { OpenAIStructuredClient } from "./openai-client";
 import { DomainError, type WardrobeService } from "./wardrobe";
 import { noOpInspirationSource, type InspirationSource } from "./inspiration";
 import {
@@ -358,8 +356,8 @@ const compactItem = (item: WardrobeItem) => ({
   favorite: item.favorite,
 });
 
-export function createGeminiOutfitReasoner(
-  client: GeminiStructuredClient,
+export function createOpenAIOutfitReasoner(
+  client: OpenAIStructuredClient,
 ): OutfitReasoner {
   return {
     async recommend(context) {
@@ -465,6 +463,7 @@ Do not recommend products, shopping, weather, trends, or online inspiration.\n\n
       return client.generateJson({
         prompt,
         responseSchema,
+        schemaName: "outfit_recommendations",
         maxOutputTokens: 2200,
       });
     },
@@ -523,6 +522,84 @@ function coherentOutfit(
     if (conflicting.some((item) => !anchorIds.has(item.id))) return false;
   }
   return true;
+}
+
+/**
+ * Keeps Complete My Outfit usable when OpenAI is not configured. The pool is
+ * already filtered and ranked against every anchor, so this only assembles
+ * real owned pieces from that allowlist into a few structurally valid looks.
+ */
+function deterministicCompletionDrafts(
+  anchors: readonly WardrobeItem[],
+  pool: readonly WardrobeItem[],
+  needs: OutfitNeeds,
+  request: CompleteOutfitRequest,
+): OutfitDraft[] {
+  const byCategory = new Map<WardrobeItem["category"], WardrobeItem[]>();
+  for (const candidate of pool) {
+    const candidates = byCategory.get(candidate.category) ?? [];
+    candidates.push(candidate);
+    byCategory.set(candidate.category, candidates);
+  }
+  const availableOptional = needs.optional.filter(
+    (category) => (byCategory.get(category)?.length ?? 0) > 0,
+  );
+  const drafts: OutfitDraft[] = [];
+  const seen = new Set<string>();
+  for (let variant = 0; variant < 4; variant += 1) {
+    const additions: WardrobeItem[] = [];
+    needs.required.forEach((category, categoryIndex) => {
+      const candidates = byCategory.get(category) ?? [];
+      const candidate = candidates[(variant + categoryIndex) % candidates.length];
+      if (candidate) additions.push(candidate);
+    });
+    if (availableOptional.length) {
+      const optionalCount = Math.min(
+        availableOptional.length,
+        1 + (variant % 2),
+      );
+      for (let offset = 0; offset < optionalCount; offset += 1) {
+        const category =
+          availableOptional[(variant + offset) % availableOptional.length]!;
+        const candidates = byCategory.get(category) ?? [];
+        const candidate = candidates[
+          (variant + Math.floor(offset / availableOptional.length)) %
+            candidates.length
+        ];
+        if (candidate) additions.push(candidate);
+      }
+    }
+    const members = [...anchors, ...additions];
+    const itemIds = [...new Set(members.map((item) => item.id))];
+    const key = [...itemIds].sort().join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const addedNames = additions.map((item) => item.name);
+    drafts.push({
+      itemIds,
+      title: `Wardrobe completion ${drafts.length + 1}`,
+      explanation: addedNames.length
+        ? `Keeps ${anchors.map((item) => item.name).join(" and ")} together, then completes the look with ${addedNames.join(" and ")} selected from your available wardrobe.`
+        : `Keeps ${anchors.map((item) => item.name).join(" and ")} together as the best available partial look from your wardrobe.`,
+      styleTags: [
+        ...new Set(members.flatMap((item) => item.styleTags)),
+      ].slice(0, 8),
+      occasionFit: request.occasion ?? null,
+    });
+  }
+  return drafts;
+}
+
+function providerUnavailable(error: ClothingAnalysisError): boolean {
+  if (error.status === 503 || error.status === 504) return true;
+  const diagnostic = error.diagnostic;
+  return (
+    diagnostic?.errorType === "network_error" ||
+    diagnostic?.status === 401 ||
+    diagnostic?.status === 403 ||
+    diagnostic?.status === 404 ||
+    (diagnostic?.status !== undefined && diagnostic.status >= 500)
+  );
 }
 
 export function createStyleItemService(
@@ -644,11 +721,24 @@ export function createStyleItemService(
         }),
       ).outfits;
     } catch (error) {
-      if (error instanceof ClothingAnalysisError) throw error;
-      throw new ClothingAnalysisError(
-        502,
-        "AI returned invalid outfit recommendations. Manual outfit building is still available.",
-      );
+      if (
+        mode === "complete-outfit" &&
+        error instanceof ClothingAnalysisError &&
+        providerUnavailable(error)
+      ) {
+        drafts = deterministicCompletionDrafts(
+          anchors,
+          pool,
+          needs,
+          request as CompleteOutfitRequest,
+        );
+      } else {
+        if (error instanceof ClothingAnalysisError) throw error;
+        throw new ClothingAnalysisError(
+          502,
+          "AI returned invalid outfit recommendations. Manual outfit building is still available.",
+        );
+      }
     }
     const allowed = new Map(
       [...anchors, ...pool].map((item) => [item.id, item]),

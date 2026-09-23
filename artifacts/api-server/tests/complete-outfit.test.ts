@@ -233,3 +233,72 @@ test("complete-outfit inspiration failure falls back to wardrobe-only reasoning"
   assert.equal(result.inspirationProvider, null);
   assert.equal(context?.inspiration, undefined);
 });
+
+test("missing OpenAI configuration falls back to deterministic owned-wardrobe completions", async () => {
+  const top = item("top", "Tops", { name: "Silk blouse" });
+  const bottom = item("bottom", "Bottoms", { name: "Dark jeans" });
+  const shoes = item("shoes", "Shoes", { name: "Chelsea boots" });
+  const bag = item("bag", "Bags", { name: "Leather tote" });
+  const result = await createStyleItemService(
+    wardrobe([top, bottom, shoes, bag]),
+    {
+      recommend: async () => {
+        throw new ClothingAnalysisError(
+          503,
+          "AI is not configured. You can continue manually.",
+        );
+      },
+    },
+  ).complete({ anchorItemIds: [top.id, bottom.id] });
+
+  assert(result.outfits.length > 0);
+  assert(
+    result.outfits.every((look) =>
+      [top.id, bottom.id].every((id) => look.itemIds.includes(id)),
+    ),
+  );
+  assert(
+    result.outfits
+      .flatMap((look) => look.itemIds)
+      .every((id) => [top.id, bottom.id, shoes.id, bag.id].includes(id)),
+  );
+  assert(result.outfits.some((look) => look.itemIds.includes(shoes.id)));
+  assert.equal(result.outfits[0]?.missingCategories.length, 0);
+});
+
+test("Complete My Outfit falls back on OpenAI timeout and 5xx, but not malformed output", async () => {
+  const top = item("top", "Tops");
+  const bottom = item("bottom", "Bottoms");
+  const shoes = item("shoes", "Shoes");
+  for (const error of [
+    new ClothingAnalysisError(504, "AI timed out.", {
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      errorType: "timeout",
+    }),
+    new ClothingAnalysisError(502, "AI unavailable.", {
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      status: 503,
+      errorType: "server_error",
+    }),
+  ]) {
+    const result = await createStyleItemService(
+      wardrobe([top, bottom, shoes]),
+      { recommend: async () => { throw error; } },
+    ).complete({ anchorItemIds: [top.id, bottom.id] });
+    assert(result.outfits.some((look) => look.itemIds.includes(shoes.id)));
+  }
+  const invalid = new ClothingAnalysisError(502, "AI returned invalid JSON.", {
+    provider: "openai",
+    model: "gpt-5.4-mini",
+    errorType: "malformed_structured_output",
+  });
+  await assert.rejects(
+    () => createStyleItemService(
+      wardrobe([top, bottom, shoes]),
+      { recommend: async () => { throw invalid; } },
+    ).complete({ anchorItemIds: [top.id, bottom.id] }),
+    (error: unknown) => error === invalid,
+  );
+});

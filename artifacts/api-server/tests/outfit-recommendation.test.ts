@@ -5,13 +5,11 @@ import {
   wardrobeItemSchema,
   type WardrobeItem,
 } from "@workspace/api-zod";
-import {
-  ClothingAnalysisError,
-  type GeminiStructuredClient,
-} from "../src/services/clothing-analysis";
+import { ClothingAnalysisError } from "../src/services/clothing-analysis";
+import type { OpenAIStructuredClient } from "../src/services/openai-client";
 import {
   buildCandidatePool,
-  createGeminiOutfitReasoner,
+  createOpenAIOutfitReasoner,
   createStyleItemService,
   missingCategories,
   type OutfitReasoner,
@@ -114,19 +112,19 @@ test("style-item keeps the selected item, uses only real IDs, ranks complete loo
   assert.equal(context?.inspiration, undefined);
 });
 
-test("Gemini reasoning prompt contains compact metadata, allowed IDs, and Style DNA but no images", async () => {
+test("OpenAI reasoning prompt contains compact metadata, allowed IDs, and Style DNA but no images", async () => {
   const selected = item("selected", "Tops", { styleTags: ["Classic"] });
   const bottom = item("bottom", "Bottoms");
   let prompt = "";
   let responseSchema: unknown;
-  const client: GeminiStructuredClient = {
+  const client: OpenAIStructuredClient = {
     generateJson: async (input) => {
       prompt = input.prompt;
       responseSchema = input.responseSchema;
       return { outfits: [] };
     },
   };
-  await createGeminiOutfitReasoner(client).recommend({
+  await createOpenAIOutfitReasoner(client).recommend({
     request: { wardrobeItemId: selected.id },
     selectedItem: selected,
     candidatePool: [bottom],
@@ -141,7 +139,7 @@ test("Gemini reasoning prompt contains compact metadata, allowed IDs, and Style 
   assert(JSON.stringify(responseSchema).includes(bottom.id));
 
   const wardrobeOnlyPrompt = prompt;
-  await createGeminiOutfitReasoner(client).recommend({
+  await createOpenAIOutfitReasoner(client).recommend({
     request: { wardrobeItemId: selected.id, useInspiration: false },
     selectedItem: selected,
     candidatePool: [bottom],
@@ -149,7 +147,7 @@ test("Gemini reasoning prompt contains compact metadata, allowed IDs, and Style 
   });
   assert.equal(prompt, wardrobeOnlyPrompt);
 
-  await createGeminiOutfitReasoner(client).recommend({
+  await createOpenAIOutfitReasoner(client).recommend({
     request: { wardrobeItemId: selected.id, useInspiration: true },
     selectedItem: selected,
     candidatePool: [bottom],
@@ -478,7 +476,7 @@ test("empty and insufficient wardrobes return safe errors or an explicit partial
   assert.deepEqual(result.outfits[0]?.missingCategories, ["Bottoms", "Shoes"]);
 });
 
-test("unavailable selections, Gemini failures, and malformed Gemini responses fail safely", async () => {
+test("unavailable selections, OpenAI failures, and malformed OpenAI responses fail safely", async () => {
   const unavailable = item("selected", "Tops", { availability: "unavailable" });
   const never: OutfitReasoner = { recommend: async () => ({}) };
   await assert.rejects(
@@ -492,7 +490,7 @@ test("unavailable selections, Gemini failures, and malformed Gemini responses fa
   const bottom = item("bottom", "Bottoms");
   const failed: OutfitReasoner = {
     recommend: async () => {
-      throw new ClothingAnalysisError(502, "Gemini failed");
+      throw new ClothingAnalysisError(502, "OpenAI failed");
     },
   };
   await assert.rejects(

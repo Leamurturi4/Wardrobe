@@ -24,8 +24,12 @@ import {
   z,
   type ClothingAnalysisResult,
 } from "@workspace/api-zod";
+import {
+  AIProviderError as ClothingAnalysisError,
+  type OpenAIStructuredClient,
+} from "./openai-client";
 
-export const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite";
+export { ClothingAnalysisError };
 export const CLOTHING_ANALYSIS_PROMPT = `Analyze the single garment in this image for a digital wardrobe.
 Focus on the garment and ignore the person, background, props, labels, and environment whenever possible.
 Classify only what is reasonably visible: garment category and subtype, dominant and secondary colors, pattern,
@@ -231,14 +235,6 @@ export function normalizeClothingAnalysis(
   });
 }
 
-export class ClothingAnalysisError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
 export interface ClothingImage {
   bytes: Buffer;
   mimeType: "image/jpeg" | "image/png" | "image/webp";
@@ -246,21 +242,6 @@ export interface ClothingImage {
 export interface ClothingAnalyzer {
   analyze(image: ClothingImage): Promise<ClothingAnalysisResult>;
 }
-export interface GeminiOptions {
-  apiKey?: string;
-  model?: string;
-  fetchFn?: typeof fetch;
-  timeoutMs?: number;
-}
-export interface GeminiStructuredClient {
-  generateJson(input: {
-    prompt: string;
-    responseSchema: unknown;
-    image?: ClothingImage;
-    maxOutputTokens?: number;
-  }): Promise<unknown>;
-}
-
 const nullableEnum = (values: readonly string[]) => ({
   type: ["string", "null"],
   enum: [...values, null],
@@ -270,7 +251,7 @@ const arrayEnum = (values: readonly string[], maxItems: number) => ({
   items: { type: "string", enum: values },
   maxItems,
 });
-const geminiResponseSchema = {
+const clothingAnalysisResponseSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
@@ -344,135 +325,15 @@ const geminiResponseSchema = {
   ],
 };
 
-export function createGeminiStructuredClient(
-  options: GeminiOptions,
-): GeminiStructuredClient {
-  const apiKey = options.apiKey?.trim();
-  const model = options.model?.trim() || DEFAULT_GEMINI_MODEL;
-  const fetchFn = options.fetchFn ?? fetch;
-  const timeoutMs = options.timeoutMs ?? 20_000;
-  return {
-    async generateJson(input) {
-      if (!apiKey)
-        throw new ClothingAnalysisError(
-          503,
-          "AI is not configured. You can continue manually.",
-        );
-      let response: Response;
-      try {
-        response = await fetchFn(
-          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-goog-api-key": apiKey,
-            },
-            signal: AbortSignal.timeout(timeoutMs),
-            body: JSON.stringify({
-              contents: [
-                {
-                  role: "user",
-                  parts: [
-                    { text: input.prompt },
-                    ...(input.image
-                      ? [
-                          {
-                            inline_data: {
-                              mime_type: input.image.mimeType,
-                              data: input.image.bytes.toString("base64"),
-                            },
-                          },
-                        ]
-                      : []),
-                  ],
-                },
-              ],
-              generationConfig: {
-                temperature: 0.1,
-                maxOutputTokens: input.maxOutputTokens ?? 2048,
-                responseMimeType: "application/json",
-                responseJsonSchema: input.responseSchema,
-              },
-            }),
-          },
-        );
-      } catch (error) {
-        const timedOut =
-          error instanceof Error &&
-          (error.name === "TimeoutError" || error.name === "AbortError");
-        throw new ClothingAnalysisError(
-          timedOut ? 504 : 502,
-          timedOut
-            ? "AI timed out. You can continue manually."
-            : "AI is temporarily unavailable. You can continue manually.",
-        );
-      }
-      if (!response.ok)
-        throw new ClothingAnalysisError(
-          502,
-          "AI is temporarily unavailable. You can continue manually.",
-        );
-      let payload: unknown;
-      try {
-        payload = await response.json();
-      } catch {
-        throw new ClothingAnalysisError(
-          502,
-          "AI returned an unreadable result. You can continue manually.",
-        );
-      }
-      const result = z
-        .object({
-          candidates: z
-            .array(
-              z
-                .object({
-                  content: z
-                    .object({
-                      parts: z.array(
-                        z.object({ text: z.string().optional() }).passthrough(),
-                      ),
-                    })
-                    .passthrough(),
-                })
-                .passthrough(),
-            )
-            .min(1),
-        })
-        .passthrough()
-        .safeParse(payload);
-      const output = result.success
-        ? result.data.candidates[0]?.content.parts
-            .map((part) => part.text || "")
-            .join("")
-        : "";
-      if (!output)
-        throw new ClothingAnalysisError(
-          502,
-          "AI returned no structured result. You can continue manually.",
-        );
-      try {
-        return JSON.parse(output) as unknown;
-      } catch {
-        throw new ClothingAnalysisError(
-          502,
-          "AI returned invalid JSON. You can continue manually.",
-        );
-      }
-    },
-  };
-}
-
-export function createGeminiClothingAnalyzer(
-  options: GeminiOptions,
+export function createOpenAIClothingAnalyzer(
+  client: OpenAIStructuredClient,
 ): ClothingAnalyzer {
-  const client = createGeminiStructuredClient(options);
   return {
     async analyze(image) {
       const parsed = await client.generateJson({
         prompt: CLOTHING_ANALYSIS_PROMPT,
-        responseSchema: geminiResponseSchema,
+        responseSchema: clothingAnalysisResponseSchema,
+        schemaName: "clothing_analysis",
         image,
       });
       try {

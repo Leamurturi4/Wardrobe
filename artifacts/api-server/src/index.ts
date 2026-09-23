@@ -5,11 +5,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { logger } from "./lib/logger";
 import {
-  createGeminiClothingAnalyzer,
-  createGeminiStructuredClient,
+  createOpenAIClothingAnalyzer,
 } from "./services/clothing-analysis";
+import { createOpenAIStructuredClient } from "./services/openai-client";
 import {
-  createGeminiOutfitReasoner,
+  createOpenAIOutfitReasoner,
   createStyleItemService,
 } from "./services/outfit-recommendation";
 import { noOpInspirationSource } from "./services/inspiration";
@@ -43,23 +43,30 @@ await migrate(
 );
 if (process.env.SEED_DEMO === "true") await seedDemo(database.db);
 const wardrobeService = createWardrobeService(database.db);
-const geminiOptions = {
-  apiKey: process.env.GEMINI_API_KEY,
-  model: process.env.GEMINI_MODEL,
+const openAIOptions = {
+  apiKey: process.env.OPENAI_API_KEY,
+  model: process.env.OPENAI_MODEL,
+  onError: (diagnostic: {
+    provider: "openai";
+    model: string;
+    status?: number;
+    errorType: string;
+    errorCode?: string;
+  }) => logger.warn(diagnostic, "OpenAI request failed"),
 };
-const geminiClient = createGeminiStructuredClient(geminiOptions);
+const openAIClient = createOpenAIStructuredClient(openAIOptions);
 // Without search credentials the app stays on wardrobe-only recommendations.
 const inspirationSource =
-  createConfiguredInspirationSource(process.env, geminiClient, (error) =>
+  createConfiguredInspirationSource(process.env, openAIClient, (error) =>
     logger.warn({ err: error }, "Inspiration search degraded"),
   ) ?? noOpInspirationSource;
 const app = createApp(
   wardrobeService,
   process.env.UPLOAD_DIR || path.join(root, ".local/uploads"),
-  createGeminiClothingAnalyzer(geminiOptions),
+  createOpenAIClothingAnalyzer(openAIClient),
   createStyleItemService(
     wardrobeService,
-    createGeminiOutfitReasoner(geminiClient),
+    createOpenAIOutfitReasoner(openAIClient),
     inspirationSource,
   ),
 );

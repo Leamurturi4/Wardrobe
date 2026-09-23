@@ -3,7 +3,7 @@ import {
   type InspirationResult,
   type WardrobeItem,
 } from "@workspace/api-zod";
-import type { GeminiStructuredClient } from "./clothing-analysis";
+import type { OpenAIStructuredClient } from "./openai-client";
 import {
   generateCombinedInspirationQueries,
   generateInspirationQueries,
@@ -15,7 +15,7 @@ import {
   TtlCache,
 } from "./inspiration-cache";
 import {
-  createGeminiStyleDirectionExtractor,
+  createOpenAIStyleDirectionExtractor,
   type StyleDirectionExtractor,
 } from "./inspiration-directions";
 import {
@@ -146,7 +146,7 @@ const positiveNumber = (value: string | undefined, fallback: number) => {
  */
 export function createConfiguredInspirationSource(
   env: InspirationEnvironment,
-  client: GeminiStructuredClient,
+  client: OpenAIStructuredClient,
   onError?: (error: unknown) => void,
 ): InspirationSource | null {
   const provider = createBraveInspirationSearchProvider({
@@ -161,7 +161,7 @@ export function createConfiguredInspirationSource(
   );
   return createOnlineInspirationSource({
     provider,
-    extractor: createGeminiStyleDirectionExtractor(client, provider.name),
+    extractor: createOpenAIStyleDirectionExtractor(client, provider.name),
     cache: new InspirationCache({ ttlMs }),
     hitCache: new TtlCache<InspirationHit[]>({ ttlMs }),
     ...(onError ? { onError } : {}),

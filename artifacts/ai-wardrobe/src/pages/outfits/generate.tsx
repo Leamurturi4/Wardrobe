@@ -26,12 +26,17 @@ import { DataStatus } from "@/components/DataStatus";
 import { customFetch } from "@workspace/api-client-react";
 import {
   formalities,
-  completeOutfitRecommendationsSchema,
   occasionValues,
   styleDirections,
   styleItemRecommendationsSchema,
   type OutfitRecommendation,
 } from "@workspace/api-zod";
+import {
+  buildCompleteOutfitRequest,
+  buildGeneratedOutfitSaveBody,
+  parseCompleteOutfitResponse,
+  toggleAnchorId,
+} from "./complete-outfit-state";
 
 type ClosetPiece = {
   id: string;
@@ -174,20 +179,11 @@ export default function GenerateOutfit() {
         {
           path: "outfits",
           method: "POST",
-          body: {
-            name: recommendation.title,
-            source: "ai-assisted",
-            favorite: true,
-            items: recommendation.itemIds.map((itemId) => ({
-              itemId,
-              role: items
-                .find((item) => item.id === itemId)
-                ?.category.toLowerCase(),
-            })),
-            styleTags: recommendation.styleTags,
-            occasion: recommendation.occasionFit || occasion,
-            recommendationExplanation: recommendation.explanation,
-          },
+          body: buildGeneratedOutfitSaveBody(
+            recommendation,
+            items,
+            occasion,
+          ),
         },
         { onSuccess: () => setSaved(true) },
       );
@@ -267,12 +263,13 @@ export default function GenerateOutfit() {
   const toggleAnchor = (id: string) => {
     setRecommendationError(null);
     setAnchorIds((current) => {
-      if (current.includes(id)) return current.filter((value) => value !== id);
       if (current.length === 3) {
-        setRecommendationError("Complete My Outfit supports up to three selected pieces.");
-        return current;
+        if (!current.includes(id))
+          setRecommendationError(
+            "Complete My Outfit supports up to three selected pieces.",
+          );
       }
-      return [...current, id];
+      return toggleAnchorId(current, id);
     });
   };
   const completeOutfit = async () => {
@@ -285,17 +282,18 @@ export default function GenerateOutfit() {
     setSaved(false);
     setHasVerdict(false);
     try {
-      const result = completeOutfitRecommendationsSchema.parse(
+      const result = parseCompleteOutfitResponse(
         await customFetch("/api/outfits/complete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            anchorItemIds: anchorIds,
-            ...(occasion ? { occasion } : {}),
-            ...(style ? { style } : {}),
-            ...(formality ? { formality } : {}),
-            useInspiration,
-          }),
+          body: JSON.stringify(
+            buildCompleteOutfitRequest(anchorIds, {
+              occasion,
+              style,
+              formality: formality || undefined,
+              useInspiration,
+            }),
+          ),
         }),
       );
       setRecommendations(result.outfits);
@@ -664,7 +662,9 @@ export default function GenerateOutfit() {
                   <Sparkles />
                   <h2>
                     {recommendationError
-                      ? "Could not style this item."
+                      ? anchorIds.length >= 2
+                        ? "Could not complete this outfit."
+                        : "Could not style this item."
                       : "Ready when you are."}
                   </h2>
                   <p>

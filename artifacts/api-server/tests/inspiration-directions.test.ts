@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { styleDirectionSchema, type StyleDirection } from "@workspace/api-zod";
-import type { GeminiStructuredClient } from "../src/services/clothing-analysis";
+import type { OpenAIStructuredClient } from "../src/services/openai-client";
 import {
-  createGeminiStyleDirectionExtractor,
+  createOpenAIStyleDirectionExtractor,
   normalizeStyleDirections,
   reconcileStyleDirections,
 } from "../src/services/inspiration-directions";
@@ -171,10 +171,10 @@ test("reconciliation keeps a small, deduplicated set", () => {
   assert.deepEqual(reconcileStyleDirections([]), []);
 });
 
-test("Gemini extraction sends compact references and returns reconciled directions", async () => {
+test("OpenAI extraction sends compact references and returns reconciled directions", async () => {
   let prompt = "";
   let responseSchema: unknown;
-  const client: GeminiStructuredClient = {
+  const client: OpenAIStructuredClient = {
     generateJson: async (input) => {
       prompt = input.prompt;
       responseSchema = input.responseSchema;
@@ -193,7 +193,7 @@ test("Gemini extraction sends compact references and returns reconciled directio
       };
     },
   };
-  const directions = await createGeminiStyleDirectionExtractor(
+  const directions = await createOpenAIStyleDirectionExtractor(
     client,
     "brave-search",
   ).extract({ garment, hits, options: { occasion: "Work" } });
@@ -210,13 +210,13 @@ test("Gemini extraction sends compact references and returns reconciled directio
 
 test("extraction is skipped when no references were found", async () => {
   let calls = 0;
-  const client: GeminiStructuredClient = {
+  const client: OpenAIStructuredClient = {
     generateJson: async () => {
       calls += 1;
       return { directions: [] };
     },
   };
-  const directions = await createGeminiStyleDirectionExtractor(
+  const directions = await createOpenAIStyleDirectionExtractor(
     client,
     "brave-search",
   ).extract({ garment, hits: [], options: {} });

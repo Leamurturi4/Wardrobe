@@ -6,7 +6,7 @@ import {
   type SourceReference,
   type StyleDirection,
 } from "@workspace/api-zod";
-import type { GeminiStructuredClient } from "./clothing-analysis";
+import type { OpenAIStructuredClient } from "./openai-client";
 import type { InspirationHit } from "./inspiration-search";
 import type { InspirationQueryGarment } from "./inspiration";
 import type { InspirationSearchOptions } from "./inspiration";
@@ -268,7 +268,7 @@ export function reconcileStyleDirections(
     .map((entry) => entry.direction);
 }
 
-/** Compact reference payload sent to Gemini: no images, no full article text. */
+/** Compact reference payload sent to OpenAI: no images, no full article text. */
 export function buildDirectionExtractionPayload(
   input: StyleDirectionExtractionInput,
 ) {
@@ -301,8 +301,8 @@ export function buildDirectionExtractionPayload(
   };
 }
 
-export function createGeminiStyleDirectionExtractor(
-  client: GeminiStructuredClient,
+export function createOpenAIStyleDirectionExtractor(
+  client: OpenAIStructuredClient,
   provider: string,
 ): StyleDirectionExtractor {
   return {
@@ -371,6 +371,7 @@ export function createGeminiStyleDirectionExtractor(
           buildDirectionExtractionPayload(input),
         )}`,
         responseSchema,
+        schemaName: "style_directions",
         maxOutputTokens: 1800,
       });
       return reconcileStyleDirections(

@@ -458,7 +458,7 @@ export const clothingAnalysisRequestSchema = z
       ),
   })
   .strict();
-export const AI_ANALYSIS_VERSION = "gemini-clothing-v1";
+export const AI_ANALYSIS_VERSION = "openai-clothing-v1";
 export function analysisToWardrobeInput(
   analysis: ClothingAnalysisResult,
   originalImage: string,
