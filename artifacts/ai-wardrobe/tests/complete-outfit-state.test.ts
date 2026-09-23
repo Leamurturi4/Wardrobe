@@ -5,7 +5,11 @@ import {
   buildCompleteOutfitRequest,
   buildGeneratedOutfitSaveBody,
   buildRecommendationPieces,
+  anchorSelectionIssue,
+  generationErrorMessage,
+  moveRecommendationIndex,
   parseCompleteOutfitResponse,
+  recommendationKey,
   toggleAnchorId,
 } from "../src/pages/outfits/complete-outfit-state";
 
@@ -17,6 +21,57 @@ test("anchor selection retains distinct IDs, removes them, and caps at three", (
     "jeans",
     "shoes",
   ]);
+});
+
+test("network failures use a human-readable retry message", () => {
+  assert.equal(
+    generationErrorMessage(new TypeError("Failed to fetch"), "fallback"),
+    "The AI stylist is temporarily unavailable. Your selected pieces and last outfit are still here.",
+  );
+});
+
+test("anchor selection prevents structurally incompatible combinations", () => {
+  const top = { id: "top", category: "Tops", subcategory: "T-Shirt" } as const;
+  const bottom = {
+    id: "bottom",
+    category: "Bottoms",
+    subcategory: "Trousers",
+  } as const;
+  const dress = {
+    id: "dress",
+    category: "Dresses",
+    subcategory: "Midi Dress",
+  } as const;
+  const secondBottom = {
+    id: "skirt",
+    category: "Bottoms",
+    subcategory: "Skirt",
+  } as const;
+
+  assert.equal(
+    anchorSelectionIssue([top, bottom], dress)?.includes("cannot"),
+    true,
+  );
+  assert.equal(
+    anchorSelectionIssue([top, bottom], secondBottom),
+    "Choose only one bottoms anchor.",
+  );
+  assert.equal(anchorSelectionIssue([top], bottom), null);
+});
+
+test("recommendation navigation wraps and save identity follows exact wardrobe IDs", () => {
+  const recommendation = outfitRecommendationSchema.parse({
+    itemIds: ["shoes", "top", "bottom"],
+    title: "First title",
+    explanation: "A complete outfit.",
+    styleTags: [],
+    occasionFit: null,
+    missingCategories: [],
+  });
+  const sameItems = { ...recommendation, title: "Alternate title" };
+  assert.equal(moveRecommendationIndex(0, -1, 3), 2);
+  assert.equal(moveRecommendationIndex(2, 1, 3), 0);
+  assert.equal(recommendationKey(recommendation), recommendationKey(sameItems));
 });
 
 test("recommendation pieces resolve in API order and distinguish anchors from additions", () => {

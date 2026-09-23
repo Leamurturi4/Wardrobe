@@ -15,6 +15,64 @@ type CompletionOptions = {
   useInspiration?: boolean;
 };
 
+type AnchorCandidate = Pick<WardrobeItem, "id" | "category" | "subcategory">;
+
+const exclusiveAnchorCategories = new Set<WardrobeItem["category"]>([
+  "Tops",
+  "Bottoms",
+  "Dresses",
+  "Outerwear",
+  "Shoes",
+  "Bags",
+]);
+
+const isOnePiece = (item: AnchorCandidate) =>
+  item.category === "Dresses" ||
+  item.subcategory.toLowerCase().includes("jumpsuit");
+
+export function anchorSelectionIssue(
+  current: readonly AnchorCandidate[],
+  candidate: AnchorCandidate,
+) {
+  if (current.some((item) => item.id === candidate.id)) return null;
+  if (current.length >= 3) return "Choose up to three anchor pieces.";
+  const candidateIsOnePiece = isOnePiece(candidate);
+  const hasOnePiece = current.some(isOnePiece);
+  const hasSeparate = current.some((item) =>
+    ["Tops", "Bottoms"].includes(item.category),
+  );
+  if (
+    (candidateIsOnePiece && hasSeparate) ||
+    (hasOnePiece && ["Tops", "Bottoms", "Dresses"].includes(candidate.category))
+  )
+    return "A dress or jumpsuit cannot be anchored with another top or bottom.";
+  if (
+    exclusiveAnchorCategories.has(candidate.category) &&
+    current.some((item) => item.category === candidate.category)
+  )
+    return `Choose only one ${candidate.category.toLowerCase()} anchor.`;
+  return null;
+}
+
+export function recommendationKey(recommendation: OutfitRecommendation) {
+  return [...recommendation.itemIds].sort().join("|");
+}
+
+export function moveRecommendationIndex(
+  current: number,
+  direction: number,
+  length: number,
+) {
+  return length ? (current + direction + length) % length : 0;
+}
+
+export function generationErrorMessage(error: unknown, fallback: string) {
+  if (!(error instanceof Error)) return fallback;
+  if (/failed to fetch|network|load failed/i.test(error.message))
+    return "The AI stylist is temporarily unavailable. Your selected pieces and last outfit are still here.";
+  return error.message || fallback;
+}
+
 export function toggleAnchorId(current: string[], id: string) {
   if (current.includes(id)) return current.filter((value) => value !== id);
   if (current.length >= 3) return current;
